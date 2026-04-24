@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+
+{% block title %}Добро пожаловать{% endblock %}
+
+{% block body %}
+<h1>🏢 Система учёта сотрудников</h1>
+<div class="card-grid">
+    <div class="card">
+        <h3>👤 Вход для сотрудника</h3>
+        <a href="{{ url_for('login') }}"><button>Войти</button></a>
+    </div>
+    <div class="card">
+        <h3>👑 Вход для админа</h3>
+        <a href="{{ url_for('login') }}"><button>Войти</button></a>
+    </div>
+    <div class="card">
+        <h3>📝 Регистрация</h3>
+        <a href="{{ url_for('registration') }}"><button>Регистрация</button></a>
+    </div>
+</div>
+{% endblock %}

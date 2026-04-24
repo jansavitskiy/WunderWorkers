@@ -1,0 +1,70 @@
+/* workers.css — стили для панели сотрудника */
+.workers-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.welcome-title {
+    text-align: center;
+    font-size: 2.2rem;
+    margin-bottom: 0.5rem;
+}
+
+.subtitle {
+    text-align: center;
+    color: var(--text-secondary, #6c757d);
+    margin-bottom: 2rem;
+}
+
+.button-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1.8rem;
+    margin: 2rem 0;
+}
+
+.feature-btn {
+    background: white;
+    border: none;
+    border-radius: 32px;
+    padding: 1.8rem 1rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.08);
+    font-family: inherit;
+    width: 100%;
+}
+
+.feature-btn:hover {
+    transform: translateY(-6px);
+    box-shadow: 0 15px 30px rgba(0,0,0,0.12);
+    background: linear-gradient(135deg, #f8f9ff, #ffffff);
+}
+
+.btn-icon {
+    font-size: 3rem;
+    display: block;
+    margin-bottom: 0.8rem;
+}
+
+.feature-btn h3 {
+    font-size: 1.4rem;
+    margin: 0.5rem 0;
+    color: #1f2937;
+}
+
+.feature-btn p {
+    font-size: 0.9rem;
+    color: #6c757d;
+    margin: 0;
+}
+
+/* Кнопка выхода — отдельный стиль */
+.logout-btn {
+    background: #fff5f5;
+    border-color: #feb2b2;
+}
+.logout-btn:hover {
+    background: #fed7d7;
+}

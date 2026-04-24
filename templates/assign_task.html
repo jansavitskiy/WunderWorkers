@@ -1,0 +1,46 @@
+{% extends 'base.html' %}
+{% block title %}Постановка задачи{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
+
+{% block body %}
+<div class="admin-dashboard">
+    <h1>⏱️ Поставить задачу сотруднику</h1>
+    <a href="{{ url_for('admin_panel') }}" class="btn-secondary">← Назад</a>
+
+    <form method="POST" action="{{ url_for('assign_task') }}" style="max-width: 600px; margin-top: 2rem;">
+        <div class="form-group">
+            <label>Сотрудник</label>
+            <select name="user_id" required>
+                {% for user in users %}
+                    <option value="{{ user.id }}">{{ user.full_name }} ({{ user.nickname }})</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Название задачи</label>
+            <input type="text" name="title" required>
+        </div>
+        <div class="form-group">
+            <label>Описание</label>
+            <textarea name="description" rows="4"></textarea>
+        </div>
+        <div class="form-group">
+            <label>Дедлайн</label>
+            <input type="date" name="deadline">
+        </div>
+        <button type="submit" class="btn-primary">Назначить задачу</button>
+    </form>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
+<script>
+    // Пока отключаем реальную отправку, чтобы не было ошибки 405
+    document.querySelector('form')?.addEventListener('submit', (e) => {
+        e.preventDefault();
+        showToast('Задача будет сохранена после реализации бэкенда', 'success');
+    });
+</script>
+{% endblock %}

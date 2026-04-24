@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+
+{% block title %}Панель сотрудника{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='workers.css') }}">
+{% endblock %}
+
+{% block body %}
+<div class="workers-container">
+    <h1 class="welcome-title">👋 Добро пожаловать, {{ name }}!</h1>
+    <p class="subtitle">Ваша рабочая панель</p>
+
+    <div class="button-grid">
+        <button class="feature-btn" data-url="{{ url_for('time_report') }}">
+            <span class="btn-icon">⏱️</span>
+            <h3>Завести отчёт</h3>
+            <p>Отметить начало/конец дня</p>
+        </button>
+
+        <button class="feature-btn" data-url="{{ url_for('my_tasks') }}">
+            <span class="btn-icon">📋</span>
+            <h3>Посмотреть мои задачи</h3>
+            <p>Текущие и выполненные задачи</p>
+        </button>
+
+        <button class="feature-btn" data-url="{{ url_for('my_reports') }}">
+            <span class="btn-icon">📊</span>
+            <h3>Мои отчёты</h3>
+            <p>История рабочего времени</p>
+        </button>
+
+        <button class="feature-btn" data-url="{{ url_for('settings') }}">
+            <span class="btn-icon">⚙️</span>
+            <h3>Настройки</h3>
+            <p>Изменить профиль</p>
+        </button>
+
+        <button class="feature-btn logout-btn" data-url="{{ url_for('logout') }}">
+            <span class="btn-icon">🚪</span>
+            <h3>Выйти</h3>
+            <p>Завершить сессию</p>
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='workers.js') }}"></script>
+{% endblock %}

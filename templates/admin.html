@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+
+{% block title %}Панель администратора{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
+
+{% block body %}
+<div class="admin-dashboard">
+    <h1>🛠 Административная панель</h1>
+    <p class="subtitle">Управление сотрудниками, задачами и отчётами</p>
+
+    <div class="admin-grid">
+        <a href="{{ url_for('staff_list') }}" class="admin-card">
+            <div class="card-icon">👥</div>
+            <h3>Список сотрудников</h3>
+            <p>Просмотр, редактирование, удаление</p>
+        </a>
+        <a href="{{ url_for('daily_report') }}" class="admin-card">
+            <div class="card-icon">📊</div>
+            <h3>Отчёт за день</h3>
+            <p>Статистика по задачам и времени</p>
+        </a>
+        <a href="{{ url_for('assign_task') }}" class="admin-card">
+            <div class="card-icon">⏱️</div>
+            <h3>Поставить задачу</h3>
+            <p>Назначить задачу сотруднику</p>
+        </a>
+        <a href="{{ url_for('admin_settings') }}" class="admin-card">
+            <div class="card-icon">⚙️</div>
+            <h3>Настройки</h3>
+            <p>Параметры системы и профиль</p>
+        </a>
+    </div>
+
+    <a href="{{ url_for('logout') }}" class="logout-link">🚪 Выйти из системы</a>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
+{% endblock %}
