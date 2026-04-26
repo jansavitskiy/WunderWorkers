@@ -166,8 +166,31 @@ def daily_report():
     if 'user_id' not in session or session.get('role') != 'admin':
         flash('Доступ запрещён', 'warning')
         return redirect(url_for('login'))
-    today = datetime.now().strftime('%Y-%m-%d')
-    return render_template('daily_report.html', today=today)
+    selected_date = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    reports = []
+    total_hours = 0.0
+
+    try:
+        date_from = datetime.strptime(selected_date, '%Y-%m-%d')
+        date_to = datetime(date_from.year, date_from.month, date_from.day, 23, 59, 59, 999999)
+        reports = (
+            Report.query
+            .join(User, Report.user_id == User.id)
+            .filter(Report.date_created >= date_from, Report.date_created <= date_to)
+            .order_by(Report.date_created.desc())
+            .all()
+        )
+        total_hours = sum(report.hours_worked for report in reports)
+    except ValueError:
+        flash('Некорректный формат даты', 'danger')
+        selected_date = datetime.now().strftime('%Y-%m-%d')
+
+    return render_template(
+        'daily_report.html',
+        today=selected_date,
+        reports=reports,
+        total_hours=total_hours
+    )
 
 
 @app.route('/admin/assign_task', methods=['GET', 'POST'])
