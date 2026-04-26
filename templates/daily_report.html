@@ -9,31 +9,42 @@
     <h1>📊 Отчёт за день</h1>
     <a href="{{ url_for('admin_panel') }}" class="btn-secondary">← Назад</a>
 
-    <div style="margin: 1rem 0;">
+    <form method="GET" style="margin: 1rem 0;">
         <label for="reportDate">Дата: </label>
-        <input type="date" id="reportDate" value="{{ today }}">
-        <button id="loadReport" class="btn-primary">Загрузить</button>
-    </div>
+        <input type="date" id="reportDate" name="date" value="{{ today }}">
+        <button type="submit" class="btn-primary">Загрузить</button>
+    </form>
 
-    <div id="reportContent">
-        <p>Здесь будет таблица с отработанными часами и задачами.</p>
-        <!-- Пример таблицы -->
+    {% if reports %}
+        <p><strong>Отчётов за выбранную дату:</strong> {{ reports|length }}</p>
+        <p><strong>Всего часов:</strong> {{ '%.2f'|format(total_hours) }}</p>
         <table class="data-table">
-            <thead><tr><th>Сотрудник</th><th>Пришёл</th><th>Ушёл</th><th>Часов</th><th>Выполнено задач</th></tr></thead>
+            <thead>
+                <tr>
+                    <th>Сотрудник</th>
+                    <th>Организация</th>
+                    <th>Часов</th>
+                    <th>Что выполнено</th>
+                    <th>Время отправки</th>
+                </tr>
+            </thead>
             <tbody>
-                <tr><td>Иванов Иван</td><td>09:05</td><td>18:10</td><td>8.08</td><td>3</td></tr>
-                <tr><td>Петров Пётр</td><td>09:30</td><td>17:45</td><td>7.25</td><td>2</td></tr>
+                {% for report in reports %}
+                    <tr>
+                        <td>{{ report.user.full_name }}</td>
+                        <td>{{ report.organization }}</td>
+                        <td>{{ report.hours_worked }}</td>
+                        <td>{{ report.description }}</td>
+                        <td>{{ report.date_created.strftime('%d.%m.%Y %H:%M') }}</td>
+                    </tr>
+                {% endfor %}
             </tbody>
         </table>
-    </div>
+    {% else %}
+        <p>За выбранную дату отчётов нет.</p>
+    {% endif %}
 </div>
 {% endblock %}
 {% block extra_js %}
 <script src="{{ url_for('static', filename='admin.js') }}"></script>
-<script>
-    document.getElementById('loadReport')?.addEventListener('click', () => {
-        const date = document.getElementById('reportDate').value;
-        showToast(`Загрузка отчёта за ${date}... (заглушка)`, 'info');
-    });
-</script>
 {% endblock %}
