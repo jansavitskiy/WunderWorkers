@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+
+{% block title %}Добавление отчёта{% endblock %}
+
+{% block body %}
+<h1>Добавить отчёт</h1>
+
+<form method="POST">
+    {# CSRF-токен Flask-WTF: защита формы от поддельных запросов #}
+    {{ form.hidden_tag() }}
+
+    <div class="form-group">
+        <label for="{{ form.organization.id }}">{{ form.organization.label.text }}</label>
+        {{ form.organization(class="form-control", placeholder="Введите название организации") }}
+        {% for error in form.organization.errors %}
+            <div class="alert danger">{{ error }}</div>
+        {% endfor %}
+    </div>
+
+    <div class="form-group">
+        <label for="{{ form.hours_worked.id }}">{{ form.hours_worked.label.text }}</label>
+        {{ form.hours_worked(class="form-control", placeholder="Например, 8") }}
+        {% for error in form.hours_worked.errors %}
+            <div class="alert danger">{{ error }}</div>
+        {% endfor %}
+    </div>
+
+    <div class="form-group">
+        <label for="{{ form.description.id }}">{{ form.description.label.text }}</label>
+        {{ form.description(class="form-control", rows="5", placeholder="Опишите, что было выполнено") }}
+        {% for error in form.description.errors %}
+            <div class="alert danger">{{ error }}</div>
+        {% endfor %}
+    </div>
+
+    {{ form.submit(class="btn") }}
+</form>
+{% endblock %}
