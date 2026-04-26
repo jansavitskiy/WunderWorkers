@@ -1,17 +1,47 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from models.db import db, bcrypt
-from models import User   
+from models import User
 from datetime import datetime
-
+from flask_wtf import FlaskForm
+from wtforms import StringField, FloatField, TextAreaField, SubmitField
+from wtforms.validators import DataRequired, NumberRange
 
 app = Flask(__name__)
 app.secret_key = 'секретный-ключ-смени-его'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///workers.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['WTF_CSRF_ENABLED'] = True
 
 
 db.init_app(app)
 bcrypt.init_app(app)
+
+
+# Новая модель отчёта сотрудника.
+# Каждая запись привязана к пользователю и хранит факт выполненной работы.
+class Report(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    organization = db.Column(db.String(255), nullable=False)
+    hours_worked = db.Column(db.Float, nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    date_created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    user = db.relationship('User', backref=db.backref('reports', lazy=True))
+
+
+class ReportForm(FlaskForm):
+    # Поля формы соответствуют полям модели Report.
+    organization = StringField('Название организации', validators=[DataRequired()])
+    hours_worked = FloatField(
+        'Время работы (часы)',
+        validators=[
+            DataRequired(),
+            NumberRange(min=0.01, message='Время работы должно быть больше 0')
+        ]
+    )
+    description = TextAreaField('Что выполнено', validators=[DataRequired()])
+    submit = SubmitField('Добавить отчёт')
 
 
 # Главная страница
@@ -98,7 +128,13 @@ def my_tasks():
 
 @app.route('/my_reports')
 def my_reports():
-    return render_template('my_reports.html')
+    # Показываем только отчёты текущего сотрудника.
+    if 'user_id' not in session or session.get('role') != 'employee':
+        flash('Доступ только для сотрудников', 'warning')
+        return redirect(url_for('login'))
+
+    reports = Report.query.filter_by(user_id=session['user_id']).order_by(Report.date_created.desc()).all()
+    return render_template('my_reports.html', reports=reports)
 
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -177,6 +213,27 @@ with app.app_context():
         print("Создан администратор: admin / admin123")
 
 
+@app.route('/add_report', methods=['GET', 'POST'])
+def add_report():
+    # Добавлять отчёты могут только авторизованные пользователи.
+    if 'user_id' not in session:
+        flash('Войдите в систему, чтобы добавить отчёт', 'warning')
+        return redirect(url_for('login'))
+
+    form = ReportForm()
+    if form.validate_on_submit():
+        # Берём user_id из сессии, чтобы отчёт сохранился за текущим пользователем.
+        report = Report(
+            user_id=session['user_id'],
+            organization=form.organization.data,
+            hours_worked=form.hours_worked.data,
+            description=form.description.data
+        )
+        db.session.add(report)
+        db.session.commit()
+        flash('Отчёт успешно добавлен', 'success')
+        return redirect(url_for('workers_panel'))
+    return render_template('add_report.html', form=form)
 
 if __name__ == '__main__':
     app.run(debug=True)
