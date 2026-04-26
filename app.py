@@ -1,7 +1,9 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from models.db import db, bcrypt
 from models import User
 from datetime import datetime
+import csv
+import io
 from flask_wtf import FlaskForm
 from wtforms import StringField, FloatField, TextAreaField, SubmitField
 from wtforms.validators import DataRequired, NumberRange
@@ -203,6 +205,51 @@ def assign_task():
         return redirect(url_for('assign_task'))
     users = User.query.filter_by(role='employee').all()  # только сотрудников
     return render_template('assign_task.html', users=users)
+
+
+@app.route('/admin/daily_report/export')
+def export_daily_report():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        flash('Доступ запрещён', 'warning')
+        return redirect(url_for('login'))
+
+    selected_date = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    try:
+        date_from = datetime.strptime(selected_date, '%Y-%m-%d')
+    except ValueError:
+        flash('Некорректный формат даты', 'danger')
+        return redirect(url_for('daily_report'))
+
+    date_to = datetime(date_from.year, date_from.month, date_from.day, 23, 59, 59, 999999)
+    reports = (
+        Report.query
+        .join(User, Report.user_id == User.id)
+        .filter(Report.date_created >= date_from, Report.date_created <= date_to)
+        .order_by(Report.date_created.desc())
+        .all()
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Сотрудник', 'Организация', 'Часов', 'Что выполнено', 'Время отправки'])
+    for report in reports:
+        writer.writerow([
+            report.user.full_name,
+            report.organization,
+            report.hours_worked,
+            report.description,
+            report.date_created.strftime('%d.%m.%Y %H:%M')
+        ])
+
+    csv_content = output.getvalue()
+    output.close()
+    filename = f"daily_reports_{selected_date}.csv"
+
+    return Response(
+        csv_content,
+        mimetype='text/csv; charset=utf-8',
+        headers={'Content-Disposition': f'attachment; filename={filename}'}
+    )
 
 
 @app.route('/admin/settings', methods=['GET', 'POST'])
