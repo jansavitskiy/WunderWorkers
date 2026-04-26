@@ -13,6 +13,9 @@
         <label for="reportDate">Дата: </label>
         <input type="date" id="reportDate" name="date" value="{{ today }}">
         <button type="submit" class="btn-primary">Загрузить</button>
+        <a href="{{ url_for('export_daily_report', date=today) }}" class="btn-secondary" style="margin-left: 8px;">
+            Выгрузить CSV
+        </a>
     </form>
 
     {% if reports %}
