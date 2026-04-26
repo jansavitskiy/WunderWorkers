@@ -2,6 +2,30 @@
 {% block title %}Мои отчёты{% endblock %}
 {% block body %}
 <h1>📊 История рабочего времени</h1>
-<p>Таблица с вашими отчётами по дням.</p>
+{% if reports %}
+    {# Таблица строится из списка reports, который передаётся из маршрута /my_reports #}
+    <table class="reports-table" style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+        <thead>
+            <tr>
+                <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 8px;">Дата</th>
+                <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 8px;">Организация</th>
+                <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 8px;">Часы</th>
+                <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 8px;">Что выполнено</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for report in reports %}
+                <tr>
+                    <td style="border-bottom: 1px solid #eee; padding: 8px;">{{ report.date_created.strftime('%d.%m.%Y %H:%M') }}</td>
+                    <td style="border-bottom: 1px solid #eee; padding: 8px;">{{ report.organization }}</td>
+                    <td style="border-bottom: 1px solid #eee; padding: 8px;">{{ report.hours_worked }}</td>
+                    <td style="border-bottom: 1px solid #eee; padding: 8px;">{{ report.description }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% else %}
+    <p>У вас пока нет отчётов.</p>
+{% endif %}
 <a href="{{ url_for('workers_panel') }}" class="btn-primary">← Назад</a>
 {% endblock %}
