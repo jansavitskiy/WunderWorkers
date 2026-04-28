@@ -12,10 +12,10 @@
     <p class="subtitle">Ваша рабочая панель</p>
 
     <div class="button-grid">
-        <button class="feature-btn" data-url="{{ url_for('time_report') }}">
-            <span class="btn-icon">⏱️</span>
-            <h3>Завести отчёт</h3>
-            <p>Отметить начало/конец дня</p>
+        <button class="feature-btn" data-url="{{ url_for('add_report') }}">
+            <span class="btn-icon">📝</span>
+            <h3>Добавить отчёт</h3>
+            <p>Заполнить выполненные работы</p>
         </button>
 
         <button class="feature-btn" data-url="{{ url_for('my_tasks') }}">
@@ -29,13 +29,7 @@
             <h3>Мои отчёты</h3>
             <p>История рабочего времени</p>
         </button>
-
-        <button class="feature-btn" data-url="{{ url_for('add_report') }}">
-            <span class="btn-icon">📝</span>
-            <h3>Добавить отчёт</h3>
-            <p>Заполнить выполненные работы</p>
-        </button>
-
+        
         <button class="feature-btn" data-url="{{ url_for('settings') }}">
             <span class="btn-icon">⚙️</span>
             <h3>Настройки</h3>
