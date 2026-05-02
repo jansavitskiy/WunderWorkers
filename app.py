@@ -229,24 +229,40 @@ def export_daily_report():
         .all()
     )
 
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['Сотрудник', 'Организация', 'Часов', 'Что выполнено', 'Время отправки'])
+    # Используем список списков для данных
+    data = []
+    headers = ['Сотрудник', 'Организация', 'Часов', 'Что выполнено', 'Время отправки']
+    data.append(headers)
+    
     for report in reports:
-        writer.writerow([
+        # Очищаем описание от лишних переносов строк и запятых
+        description = report.description.replace('\n', ' ').replace('\r', ' ').replace(',', ';')
+        row = [
             report.user.full_name,
             report.organization,
             report.hours_worked,
-            report.description,
+            description,
             report.date_created.strftime('%d.%m.%Y %H:%M')
-        ])
+        ]
+        data.append(row)
 
+    # Создаём CSV с правильной кодировкой UTF-8 с BOM
+    output = io.StringIO()
+    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL, delimiter=';')  # разделитель ; для Excel
+    
+    for row in data:
+        writer.writerow(row)
+    
     csv_content = output.getvalue()
     output.close()
+    
+    # Добавляем BOM для корректного отображения кириллицы в Excel
+    csv_content_with_bom = '\uFEFF' + csv_content
+    
     filename = f"daily_reports_{selected_date}.csv"
 
     return Response(
-        csv_content,
+        csv_content_with_bom,
         mimetype='text/csv; charset=utf-8',
         headers={'Content-Disposition': f'attachment; filename={filename}'}
     )
