@@ -2,16 +2,30 @@
 
 {% block title %}Добавление отчёта{% endblock %}
 
-{% block body %}
-<h1>Добавить отчёт</h1>
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
 
-<form method="POST">
+{% block body %}
+<div class="admin-dashboard">
+    <h1>Добавить отчёт</h1>
+    <a href="{{ url_for('workers_panel') }}" class="btn-secondary">← Назад</a>
+
+    <form method="POST" style="margin-top: 2rem;">
     {# CSRF-токен Flask-WTF: защита формы от поддельных запросов #}
     {{ form.hidden_tag() }}
 
     <div class="form-group">
         <label for="{{ form.organization.id }}">{{ form.organization.label.text }}</label>
-        {{ form.organization(class="form-control", placeholder="Введите название организации") }}
+        {{ form.organization(class="form-control", placeholder="Начните вводить или выберите из списка", list="org-list", autocomplete="off") }}
+        <datalist id="org-list">
+            {% for org in organizations %}
+            <option value="{{ org.name }}">
+            {% endfor %}
+        </datalist>
+        {% if not organizations %}
+        <p class="text-muted" style="margin-top: 0.5rem;">Пока нет ни одной организации. Попросите администратора добавить их в «Настройки → Управление организациями».</p>
+        {% endif %}
         {% for error in form.organization.errors %}
             <div class="alert danger">{{ error }}</div>
         {% endfor %}
@@ -33,6 +47,7 @@
         {% endfor %}
     </div>
 
-    {{ form.submit(class="btn") }}
+    {{ form.submit(class="btn-primary") }}
 </form>
+</div>
 {% endblock %}

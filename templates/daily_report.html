@@ -35,7 +35,7 @@
                 {% for report in reports %}
                     <tr>
                         <td>{{ report.user.full_name }}</td>
-                        <td>{{ report.organization }}</td>
+                        <td>{{ report.organization.name }}</td>
                         <td>{{ report.hours_worked }}</td>
                         <td>{{ report.description }}</td>
                         <td>{{ report.date_created.strftime('%d.%m.%Y %H:%M') }}</td>
