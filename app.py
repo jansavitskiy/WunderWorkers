@@ -1,12 +1,14 @@
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from models.db import db, bcrypt
-from models import User
+from models import User, Organization
 from datetime import datetime
 import csv
 import io
 from flask_wtf import FlaskForm
-from wtforms import StringField, FloatField, TextAreaField, SubmitField
+from wtforms import StringField, FloatField, TextAreaField, SubmitField, HiddenField
 from wtforms.validators import DataRequired, NumberRange
+from sqlalchemy import inspect, text
+from sqlalchemy.orm import joinedload
 
 app = Flask(__name__)
 app.secret_key = 'секретный-ключ-смени-его'
@@ -22,18 +24,21 @@ bcrypt.init_app(app)
 # Новая модель отчёта сотрудника.
 # Каждая запись привязана к пользователю и хранит факт выполненной работы.
 class Report(db.Model):
+    __tablename__ = 'report'
+
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-    organization = db.Column(db.String(255), nullable=False)
+    organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False)
     hours_worked = db.Column(db.Float, nullable=False)
     description = db.Column(db.Text, nullable=False)
     date_created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     user = db.relationship('User', backref=db.backref('reports', lazy=True))
+    organization = db.relationship('Organization', back_populates='reports')
 
 
 class ReportForm(FlaskForm):
-    # Поля формы соответствуют полям модели Report.
+    # Название должно совпадать с одной из организаций в datalist (проверка в маршруте).
     organization = StringField('Название организации', validators=[DataRequired()])
     hours_worked = FloatField(
         'Время работы (часы)',
@@ -44,6 +49,94 @@ class ReportForm(FlaskForm):
     )
     description = TextAreaField('Что выполнено', validators=[DataRequired()])
     submit = SubmitField('Добавить отчёт')
+
+
+class AddOrganizationForm(FlaskForm):
+    name = StringField('Название', validators=[DataRequired()])
+    submit = SubmitField('Добавить организацию')
+
+
+class DeleteOrganizationForm(FlaskForm):
+    """Без SubmitField: в шаблоне используется обычная <button>, иначе validate_on_submit не проходит."""
+    org_id = HiddenField(validators=[DataRequired()])
+
+
+class DeleteReportForm(FlaskForm):
+    report_id = HiddenField(validators=[DataRequired()])
+
+
+def migrate_reports_organization_fk():
+    """Добавляет organization_id и переносит данные из старого текстового поля organization."""
+    db.create_all()
+    insp = inspect(db.engine)
+    report_table = Report.__tablename__
+    if report_table not in insp.get_table_names():
+        return
+
+    cols = {c['name'] for c in insp.get_columns(report_table)}
+    if 'organization_id' not in cols:
+        with db.engine.begin() as conn:
+            conn.execute(text(f'ALTER TABLE {report_table} ADD COLUMN organization_id INTEGER'))
+
+    insp = inspect(db.engine)
+    cols = {c['name'] for c in insp.get_columns(report_table)}
+    if 'organization' not in cols:
+        return
+
+    rows = db.session.execute(
+        text(
+            f'SELECT id, organization FROM {report_table} WHERE organization_id IS NULL '
+            f"AND organization IS NOT NULL AND organization != ''"
+        )
+    ).fetchall()
+
+    for rid, org_name in rows:
+        name = (org_name or '').strip()
+        if not name:
+            continue
+        org = Organization.query.filter_by(name=name).first()
+        if not org:
+            org = Organization(name=name)
+            db.session.add(org)
+            db.session.flush()
+        db.session.execute(
+            text(f'UPDATE {report_table} SET organization_id = :oid WHERE id = :rid'),
+            {'oid': org.id, 'rid': rid},
+        )
+    db.session.commit()
+
+    # Старый столбец organization (TEXT NOT NULL) остаётся в SQLite после ALTER; без пересборки
+    # таблицы INSERT в новую схему падает с NOT NULL constraint failed: report.organization
+    insp = inspect(db.engine)
+    cols = {c['name'] for c in insp.get_columns(report_table)}
+    if 'organization' not in cols:
+        return
+
+    tmp = '_report_migrate_tmp'
+    with db.engine.begin() as conn:
+        conn.execute(
+            text(
+                f'CREATE TABLE {tmp} ('
+                'id INTEGER NOT NULL PRIMARY KEY, '
+                'user_id INTEGER NOT NULL, '
+                'organization_id INTEGER NOT NULL, '
+                'hours_worked REAL NOT NULL, '
+                'description TEXT NOT NULL, '
+                'date_created DATETIME NOT NULL, '
+                'FOREIGN KEY(user_id) REFERENCES users (id), '
+                'FOREIGN KEY(organization_id) REFERENCES organizations (id)'
+                ')'
+            )
+        )
+        conn.execute(
+            text(
+                f'INSERT INTO {tmp} (id, user_id, organization_id, hours_worked, description, date_created) '
+                f'SELECT id, user_id, organization_id, hours_worked, description, date_created '
+                f'FROM {report_table} WHERE organization_id IS NOT NULL'
+            )
+        )
+        conn.execute(text(f'DROP TABLE {report_table}'))
+        conn.execute(text(f'ALTER TABLE {tmp} RENAME TO {report_table}'))
 
 
 # Главная страница
@@ -135,8 +228,35 @@ def my_reports():
         flash('Доступ только для сотрудников', 'warning')
         return redirect(url_for('login'))
 
-    reports = Report.query.filter_by(user_id=session['user_id']).order_by(Report.date_created.desc()).all()
-    return render_template('my_reports.html', reports=reports)
+    reports = (
+        Report.query.options(joinedload(Report.organization))
+        .filter_by(user_id=session['user_id'])
+        .order_by(Report.date_created.desc())
+        .all()
+    )
+    return render_template('my_reports.html', reports=reports, delete_form=DeleteReportForm())
+
+
+@app.route('/my_reports/delete', methods=['POST'])
+def delete_my_report():
+    if 'user_id' not in session or session.get('role') != 'employee':
+        flash('Доступ только для сотрудников', 'warning')
+        return redirect(url_for('login'))
+
+    form = DeleteReportForm()
+    if form.validate():
+        report = db.session.get(Report, int(form.report_id.data))
+        if report is None:
+            flash('Отчёт не найден', 'danger')
+        elif report.user_id != session['user_id']:
+            flash('Можно удалять только свои отчёты', 'danger')
+        else:
+            db.session.delete(report)
+            db.session.commit()
+            flash('Отчёт удалён', 'success')
+    else:
+        flash('Не удалось удалить. Обновите страницу и попробуйте снова.', 'danger')
+    return redirect(url_for('my_reports'))
 
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -176,7 +296,7 @@ def daily_report():
         date_from = datetime.strptime(selected_date, '%Y-%m-%d')
         date_to = datetime(date_from.year, date_from.month, date_from.day, 23, 59, 59, 999999)
         reports = (
-            Report.query
+            Report.query.options(joinedload(Report.organization))
             .join(User, Report.user_id == User.id)
             .filter(Report.date_created >= date_from, Report.date_created <= date_to)
             .order_by(Report.date_created.desc())
@@ -222,7 +342,7 @@ def export_daily_report():
 
     date_to = datetime(date_from.year, date_from.month, date_from.day, 23, 59, 59, 999999)
     reports = (
-        Report.query
+        Report.query.options(joinedload(Report.organization))
         .join(User, Report.user_id == User.id)
         .filter(Report.date_created >= date_from, Report.date_created <= date_to)
         .order_by(Report.date_created.desc())
@@ -239,7 +359,7 @@ def export_daily_report():
         description = report.description.replace('\n', ' ').replace('\r', ' ').replace(',', ';')
         row = [
             report.user.full_name,
-            report.organization,
+            report.organization.name,
             report.hours_worked,
             description,
             report.date_created.strftime('%d.%m.%Y %H:%M')
@@ -279,6 +399,53 @@ def admin_settings():
     return render_template('admin_settings.html')
 
 
+@app.route('/admin/organizations', methods=['GET', 'POST'])
+def admin_organizations():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        flash('Доступ запрещён', 'warning')
+        return redirect(url_for('login'))
+
+    add_form = AddOrganizationForm()
+    delete_form = DeleteOrganizationForm()
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+        if action == 'add':
+            add_form = AddOrganizationForm()
+            if add_form.validate_on_submit():
+                name = add_form.name.data.strip()
+                if Organization.query.filter_by(name=name).first():
+                    flash('Организация с таким названием уже существует', 'danger')
+                else:
+                    db.session.add(Organization(name=name))
+                    db.session.commit()
+                    flash('Организация добавлена', 'success')
+                    return redirect(url_for('admin_organizations'))
+        elif action == 'delete':
+            delete_form = DeleteOrganizationForm()
+            if delete_form.validate():
+                org = db.session.get(Organization, int(delete_form.org_id.data))
+                if org is None:
+                    flash('Организация не найдена', 'danger')
+                elif Report.query.filter_by(organization_id=org.id).first():
+                    flash('Нельзя удалить организацию, пока к ней привязаны отчёты', 'danger')
+                else:
+                    db.session.delete(org)
+                    db.session.commit()
+                    flash('Организация удалена', 'success')
+            else:
+                flash('Не удалось обработать запрос. Проверьте, что страница не устарела, и попробуйте снова.', 'danger')
+            return redirect(url_for('admin_organizations'))
+
+    organizations = Organization.query.order_by(Organization.name).all()
+    return render_template(
+        'admin_organizations.html',
+        organizations=organizations,
+        add_form=add_form,
+        delete_form=delete_form,
+    )
+
+
 # Выход
 @app.route('/logout')
 def logout():
@@ -287,9 +454,9 @@ def logout():
     return redirect(url_for('first_page'))
 
 
-# Создание таблиц (один раз, можно вынести в отдельную команду)
+# Создание таблиц и перенос схемы отчётов на связь с организациями
 with app.app_context():
-    db.create_all()
+    migrate_reports_organization_fk()
     # Создаём администратора по умолчанию, если нет ни одного пользователя
     if not User.query.first():
         admin = User(full_name='Administrator', nickname='admin', role='admin')
@@ -307,19 +474,26 @@ def add_report():
         return redirect(url_for('login'))
 
     form = ReportForm()
+    organizations = Organization.query.order_by(Organization.name).all()
+
     if form.validate_on_submit():
-        # Берём user_id из сессии, чтобы отчёт сохранился за текущим пользователем.
-        report = Report(
-            user_id=session['user_id'],
-            organization=form.organization.data,
-            hours_worked=form.hours_worked.data,
-            description=form.description.data
-        )
-        db.session.add(report)
-        db.session.commit()
-        flash('Отчёт успешно добавлен', 'success')
-        return redirect(url_for('workers_panel'))
-    return render_template('add_report.html', form=form)
+        name = (form.organization.data or '').strip()
+        org = Organization.query.filter_by(name=name).first()
+        if not org:
+            flash('Выберите организацию из списка подсказок (сначала добавьте её в настройках администратора).', 'danger')
+        else:
+            report = Report(
+                user_id=session['user_id'],
+                organization_id=org.id,
+                hours_worked=form.hours_worked.data,
+                description=form.description.data,
+            )
+            db.session.add(report)
+            db.session.commit()
+            flash('Отчёт успешно добавлен', 'success')
+            return redirect(url_for('workers_panel'))
+
+    return render_template('add_report.html', form=form, organizations=organizations)
 
 if __name__ == '__main__':
     app.run(debug=True)

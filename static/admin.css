@@ -110,6 +110,15 @@ h1 {
     transition: 0.2s;
 }
 
+a.btn-primary,
+a.btn-secondary,
+a.btn-danger {
+    display: inline-block;
+    text-decoration: none;
+    text-align: center;
+    box-sizing: border-box;
+}
+
 .btn-primary {
     background: #3b82f6;
     color: white;

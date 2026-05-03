@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+{% block title %}Организации{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
+
+{% block body %}
+<div class="admin-dashboard">
+    <h1>🏢 Управление организациями</h1>
+    <a href="{{ url_for('admin_settings') }}" class="btn-secondary">← Назад к настройкам</a>
+
+    <div style="margin-top: 2rem;">
+        <h3>Добавить организацию</h3>
+        <form method="POST" style="max-width: 480px;">
+            {{ add_form.hidden_tag() }}
+            <input type="hidden" name="action" value="add">
+            <div class="form-group">
+                <label for="{{ add_form.name.id }}">{{ add_form.name.label.text }}</label>
+                {{ add_form.name(class="form-control", placeholder="Уникальное название") }}
+                {% for err in add_form.name.errors %}
+                <div class="alert danger">{{ err }}</div>
+                {% endfor %}
+            </div>
+            {{ add_form.submit(class="btn-primary") }}
+        </form>
+    </div>
+
+    <div style="margin-top: 2rem;">
+        <h3>Список организаций</h3>
+        {% if organizations %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Название</th>
+                    <th>Дата создания</th>
+                    <th>Отчётов</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for org in organizations %}
+                <tr>
+                    <td>{{ org.name }}</td>
+                    <td>{{ org.created_at.strftime('%d.%m.%Y %H:%M') }}</td>
+                    <td>{{ org.reports|length }}</td>
+                    <td>
+                        <form method="POST" style="display: inline;" onsubmit="return confirm('Удалить организацию «{{ org.name }}»?');">
+                            {# Только CSRF: полный hidden_tag() также выводит пустой org_id и дублирует name с реальным id #}
+                            {{ delete_form.hidden_tag('csrf_token') }}
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="org_id" value="{{ org.id }}">
+                            <button type="submit" class="btn-secondary" style="color: #b91c1c;">Удалить</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p>Пока нет организаций. Добавьте первую выше — сотрудники смогут выбирать её при создании отчёта.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
+{% endblock %}

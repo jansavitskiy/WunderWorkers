@@ -1,7 +1,12 @@
 {% extends 'base.html' %}
 {% block title %}Мои задачи{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
 {% block body %}
-<h1>📋 Мои задачи</h1>
-<p>Список ваших задач появится после реализации бэкенда.</p>
-<a href="{{ url_for('workers_panel') }}" class="btn-primary">← Назад</a>
+<div class="admin-dashboard">
+    <h1>📋 Мои задачи</h1>
+    <a href="{{ url_for('workers_panel') }}" class="btn-secondary">← Назад</a>
+    <p style="margin-top: 1rem;">Список ваших задач появится после реализации бэкенда.</p>
+</div>
 {% endblock %}
