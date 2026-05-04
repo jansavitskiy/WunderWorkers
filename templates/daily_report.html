@@ -38,7 +38,7 @@
                         <td>{{ report.organization.name }}</td>
                         <td>{{ report.hours_worked }}</td>
                         <td>{{ report.description }}</td>
-                        <td>{{ report.date_created.strftime('%d.%m.%Y %H:%M') }}</td>
+                        <td>{{ report.date_created|msk }}</td>
                     </tr>
                 {% endfor %}
             </tbody>
