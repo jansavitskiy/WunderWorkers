@@ -1,14 +1,18 @@
+import io
+import csv
+import pytz
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from models.db import db, bcrypt
 from models import User, Organization
 from datetime import datetime
-import csv
-import io
 from flask_wtf import FlaskForm
 from wtforms import StringField, FloatField, TextAreaField, SubmitField, HiddenField
 from wtforms.validators import DataRequired, NumberRange
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import joinedload
+
+UTC = pytz.UTC
+MSK = pytz.timezone('Europe/Moscow')
 
 app = Flask(__name__)
 app.secret_key = 'секретный-ключ-смени-его'
@@ -16,6 +20,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///workers.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['WTF_CSRF_ENABLED'] = True
 
+app.jinja_env.filters['msk'] = lambda dt: msk_strftime(dt)
 
 db.init_app(app)
 bcrypt.init_app(app)
@@ -327,6 +332,21 @@ def assign_task():
     return render_template('assign_task.html', users=users)
 
 
+def to_msk(dt):
+    """Преобразует datetime из UTC в московское время (МСК)"""
+    if dt is None:
+        return None
+    # Если dt наивное (без timezone), считаем что это UTC
+    if dt.tzinfo is None:
+        dt = UTC.localize(dt)
+    return dt.astimezone(MSK)
+
+def msk_strftime(dt, format='%d.%m.%Y %H:%M'):
+    """Форматирует datetime в московское время"""
+    msk_dt = to_msk(dt)
+    return msk_dt.strftime(format) if msk_dt else ''
+
+
 @app.route('/admin/daily_report/export')
 def export_daily_report():
     if 'user_id' not in session or session.get('role') != 'admin':
@@ -349,44 +369,43 @@ def export_daily_report():
         .all()
     )
 
-    # Используем список списков для данных
+    # Подготовка данных для CSV
     data = []
     headers = ['Сотрудник', 'Организация', 'Часов', 'Что выполнено', 'Время отправки']
     data.append(headers)
-    
+
     for report in reports:
-        # Очищаем описание от лишних переносов строк и запятых
+        # Очистка описания (убираем переносы строк и запятые)
         description = report.description.replace('\n', ' ').replace('\r', ' ').replace(',', ';')
+        # Получаем название организации (из связанной модели или ручного ввода)
+        org_name = report.organization.name if report.organization else report.organization_name_manual
+        # Конвертируем дату в московское время через единую функцию
+        msk_time_str = msk_strftime(report.date_created)
+
         row = [
             report.user.full_name,
-            report.organization.name,
+            org_name,
             report.hours_worked,
             description,
-            report.date_created.strftime('%d.%m.%Y %H:%M')
+            msk_time_str
         ]
         data.append(row)
 
-    # Создаём CSV с правильной кодировкой UTF-8 с BOM
     output = io.StringIO()
-    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL, delimiter=';')  # разделитель ; для Excel
-    
-    for row in data:
-        writer.writerow(row)
-    
+    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL, delimiter=';')
+    writer.writerows(data)
+
     csv_content = output.getvalue()
     output.close()
-    
-    # Добавляем BOM для корректного отображения кириллицы в Excel
+    # Добавляем BOM для правильной кодировки кириллицы в Excel
     csv_content_with_bom = '\uFEFF' + csv_content
-    
-    filename = f"daily_reports_{selected_date}.csv"
 
+    filename = f"daily_reports_{selected_date}.csv"
     return Response(
         csv_content_with_bom,
         mimetype='text/csv; charset=utf-8',
         headers={'Content-Disposition': f'attachment; filename={filename}'}
     )
-
 
 @app.route('/admin/settings', methods=['GET', 'POST'])
 def admin_settings():
