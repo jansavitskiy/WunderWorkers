@@ -9,25 +9,26 @@
     <a href="{{ url_for('workers_panel') }}" class="btn-secondary">← Назад</a>
 
 {% if reports %}
-    {# Таблица строится из списка reports, который передаётся из маршрута /my_reports #}
-    <table class="reports-table" style="width: 100%; border-collapse: collapse; margin: 1rem 0 16px;">
+<table class="data-table" style="margin: 1rem 0;">
         <thead>
             <tr>
-                <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 8px;">Дата</th>
-                <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 8px;">Организация</th>
-                <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 8px;">Часы</th>
-                <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 8px;">Что выполнено</th>
-                <th style="text-align: left; border-bottom: 1px solid #ccc; padding: 8px;">Действия</th>
+                <th>Дата (МСК)</th>
+                <th>Организация</th>
+                <th>Тип работы</th>
+                <th>Часы</th>
+                <th>Что выполнено</th>
+                <th></th>
             </tr>
         </thead>
         <tbody>
             {% for report in reports %}
                 <tr>
-                    <td style="border-bottom: 1px solid #eee; padding: 8px;">{{ report.date_created.strftime('%d.%m.%Y %H:%M') }}</td>
-                    <td style="border-bottom: 1px solid #eee; padding: 8px;">{{ report.organization.name }}</td>
-                    <td style="border-bottom: 1px solid #eee; padding: 8px;">{{ report.hours_worked }}</td>
-                    <td style="border-bottom: 1px solid #eee; padding: 8px;">{{ report.description }}</td>
-                    <td style="border-bottom: 1px solid #eee; padding: 8px; white-space: nowrap;">
+                    <td>{{ report.date_created|msk }}</td>
+                    <td>{{ report.organization.name }}</td>
+                    <td>{{ report.work_type.name if report.work_type else '—' }}</td>
+                    <td>{{ report.hours_worked }}</td>
+                    <td>{{ report.description }}</td>
+                    <td>
                         <form method="POST" action="{{ url_for('delete_my_report') }}" style="display: inline;"
                               onsubmit="return confirm('Удалить этот отчёт? Это действие нельзя отменить.');">
                             {{ delete_form.hidden_tag('csrf_token') }}
