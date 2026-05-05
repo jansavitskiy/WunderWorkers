@@ -318,7 +318,6 @@ def daily_report():
     return render_template('daily_report.html', reports=reports, total_hours=total_hours, date_from=date_from, date_to=date_to)
 
 
-
 @app.route('/admin/assign_task', methods=['GET', 'POST'])
 def assign_task():
     if 'user_id' not in session or session.get('role') != 'admin':
@@ -340,6 +339,7 @@ def to_msk(dt):
         dt = UTC.localize(dt)
     return dt.astimezone(MSK)
 
+
 def msk_strftime(dt, format='%d.%m.%Y %H:%M'):
     """Форматирует datetime в московское время"""
     msk_dt = to_msk(dt)
@@ -351,14 +351,15 @@ def export_daily_report():
     if 'user_id' not in session or session.get('role') != 'admin':
         flash('Доступ запрещён', 'warning')
         return redirect(url_for('login'))
-    
+
+    # Получаем даты из параметров
     date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
     date_to = request.args.get('date_to', datetime.now().strftime('%Y-%m-%d'))
     
     try:
         from_dt = datetime.strptime(date_from, '%Y-%m-%d')
         to_dt = datetime.strptime(date_to, '%Y-%m-%d')
-        to_dt = datetime(to_dt.year, to_dt.month, to_dt.day, 23, 59, 59, 999999)
+        to_dt = datetime(to_dt.year, to_dt.month, to_dt.day, 23, 59, 59)
         
         reports = (
             Report.query.options(joinedload(Report.organization))
@@ -371,48 +372,63 @@ def export_daily_report():
         flash('Некорректный формат даты', 'danger')
         return redirect(url_for('daily_report'))
 
-    # Подготовка данных для CSV
+    # Используем список для данных
     data = []
-    headers = ['Сотрудник', 'Организация', 'Часов', 'Что выполнено', 'Время отправки']
+    headers = ['Сотрудник', 'Организация', 'Часов', 'Что выполнено', 'Дата и время']
     data.append(headers)
 
     for report in reports:
-        # Очистка описания (убираем переносы строк и запятые)
+        # Очищаем описание
         description = report.description.replace('\n', ' ').replace('\r', ' ').replace(',', ';')
-        # Получаем название организации (из связанной модели или ручного ввода)
+        
+        # Часы как ЧИСЛО (без кавычек)
+        hours = report.hours_worked
+        if isinstance(hours, float) and hours.is_integer():
+            hours = int(hours)
+        
+        # Название организации
         org_name = report.organization.name if report.organization else report.organization_name_manual
-        # Конвертируем дату в московское время через единую функцию
-        msk_time_str = msk_strftime(report.date_created)
-
-        row = [
-            report.user.full_name,
-            org_name,
-            report.hours_worked,
-            description,
-            msk_time_str
-        ]
+        
+        # Конвертируем в московское время и форматируем
+        msk_dt = to_msk(report.date_created)
+        if msk_dt:
+            date_str = msk_dt.strftime('%d.%m.%Y %H:%M')
+        else:
+            date_str = ''
+        
+        row = [report.user.full_name, org_name, hours, description, date_str]
         data.append(row)
 
+    # Создаём CSV с правильными настройками
+    import io, csv
     output = io.StringIO()
-    writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL, delimiter=';')
-    writer.writerows(data)
-
+    # Используем QUOTE_NONNUMERIC чтобы числа не оборачивались в кавычки
+    writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
+    
+    for row in data:
+        # Для каждого элемента: если это число - не оборачиваем в кавычки
+        processed_row = []
+        for cell in row:
+            if isinstance(cell, (int, float)):
+                processed_row.append(str(cell).replace('.', ','))  # Для Excel с русской локалью
+            else:
+                processed_row.append(cell)
+        writer.writerow(processed_row)
+    
     csv_content = output.getvalue()
     output.close()
-    # Добавляем BOM для правильной кодировки кириллицы в Excel
+    
+    # Добавляем BOM для кириллицы
     csv_content_with_bom = '\uFEFF' + csv_content
-
-    # Формируем имя файла с диапазоном дат
-    if date_from == date_to:
-        filename = f"daily_reports_{date_from}.csv"
-    else:
-        filename = f"daily_reports_{date_from}_to_{date_to}.csv"
+    
+    filename = f"report_{date_from}_to_{date_to}.csv"
     
     return Response(
         csv_content_with_bom,
         mimetype='text/csv; charset=utf-8',
         headers={'Content-Disposition': f'attachment; filename={filename}'}
     )
+
 
 @app.route('/admin/settings', methods=['GET', 'POST'])
 def admin_settings():
