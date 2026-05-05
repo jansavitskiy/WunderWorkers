@@ -10,10 +10,12 @@
     <a href="{{ url_for('admin_panel') }}" class="btn-secondary">← Назад</a>
 
     <form method="GET" style="margin: 1rem 0;">
-        <label for="reportDate">Дата: </label>
-        <input type="date" id="reportDate" name="date" value="{{ today }}">
-        <button type="submit" class="btn-primary">Загрузить</button>
-        <a href="{{ url_for('export_daily_report', date=today) }}" class="btn-secondary" style="margin-left: 8px;">
+        <label>Дата с:</label>
+        <input type="date" name="date_from" value="{{ date_from }}">
+        <label>Дата по:</label>
+        <input type="date" name="date_to" value="{{ date_to }}">
+        <button type="submit" class="btn-primary">Показать</button>
+        <a href="{{ url_for('export_daily_report', date_from=date_from, date_to=date_to) }}" class="btn-secondary">
             Выгрузить CSV
         </a>
     </form>
