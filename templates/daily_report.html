@@ -18,20 +18,30 @@
             <label>Дата до:</label>
             <input type="date" name="date_to" value="{{ date_to }}">
         </div>
+        <div>
+            <label>Тип работы:</label>
+            <select name="work_type_id" style="padding:10px 14px;border-radius:24px;border:1px solid #cbd5e1;background:white;min-width:180px;">
+                <option value="">— Все типы —</option>
+                {% for wt in all_work_types %}
+                <option value="{{ wt.id }}" {% if work_type_filter == wt.id|string %}selected{% endif %}>{{ wt.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
         <button type="submit" class="btn-primary">Загрузить</button>
-        <a href="{{ url_for('export_daily_report', date_from=date_from, date_to=date_to) }}" class="btn-secondary">
+        <a href="{{ url_for('export_daily_report', date_from=date_from, date_to=date_to, work_type_id=work_type_filter) }}" class="btn-secondary">
             Выгрузить CSV
         </a>
     </form>
 
     {% if reports %}
-        <p><strong>Отчётов за выбранную дату:</strong> {{ reports|length }}</p>
+        <p><strong>Отчётов за выбранный период:</strong> {{ reports|length }}</p>
         <p><strong>Всего часов:</strong> {{ '%.2f'|format(total_hours) }}</p>
-        <table class="data-table">
+        <table class="data-table sortable">
             <thead>
                 <tr>
                     <th>Сотрудник</th>
                     <th>Организация</th>
+                    <th>Тип работы</th>
                     <th>Часов</th>
                     <th>Что выполнено</th>
                     <th>Время отправки</th>
@@ -42,6 +52,7 @@
                     <tr>
                         <td>{{ report.user.full_name }}</td>
                         <td>{{ report.organization.name }}</td>
+                        <td>{{ report.work_type.name if report.work_type else '—' }}</td>
                         <td>{{ report.hours_worked }}</td>
                         <td>{{ report.description }}</td>
                         <td>{{ report.date_created|msk }}</td>
@@ -50,7 +61,7 @@
             </tbody>
         </table>
     {% else %}
-        <p>За выбранную дату отчётов нет.</p>
+        <p>За выбранный период отчётов нет.</p>
     {% endif %}
 </div>
 {% endblock %}

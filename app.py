@@ -3,11 +3,11 @@ import csv
 import pytz
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from models.db import db, bcrypt
-from models import User, Organization
+from models import User, Organization, WorkType
 from datetime import datetime
 from flask_wtf import FlaskForm
-from wtforms import StringField, FloatField, TextAreaField, SubmitField, HiddenField
-from wtforms.validators import DataRequired, NumberRange
+from wtforms import StringField, FloatField, TextAreaField, SubmitField, HiddenField, SelectField
+from wtforms.validators import DataRequired, NumberRange, Optional
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import joinedload
 
@@ -26,25 +26,28 @@ db.init_app(app)
 bcrypt.init_app(app)
 
 
-# Новая модель отчёта сотрудника.
-# Каждая запись привязана к пользователю и хранит факт выполненной работы.
+# Модель отчёта сотрудника
 class Report(db.Model):
     __tablename__ = 'report'
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False)
+    work_type_id = db.Column(db.Integer, db.ForeignKey('work_types.id'), nullable=True)
     hours_worked = db.Column(db.Float, nullable=False)
     description = db.Column(db.Text, nullable=False)
     date_created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     user = db.relationship('User', backref=db.backref('reports', lazy=True))
     organization = db.relationship('Organization', back_populates='reports')
+    work_type = db.relationship('WorkType', backref='reports')
 
+
+# ── Формы ──────────────────────────────────────────────────────────────────────
 
 class ReportForm(FlaskForm):
-    # Название должно совпадать с одной из организаций в datalist (проверка в маршруте).
     organization = StringField('Название организации', validators=[DataRequired()])
+    work_type_id = SelectField('Тип работы', coerce=int, validators=[DataRequired()])
     hours_worked = FloatField(
         'Время работы (часы)',
         validators=[
@@ -62,7 +65,6 @@ class AddOrganizationForm(FlaskForm):
 
 
 class DeleteOrganizationForm(FlaskForm):
-    """Без SubmitField: в шаблоне используется обычная <button>, иначе validate_on_submit не проходит."""
     org_id = HiddenField(validators=[DataRequired()])
 
 
@@ -70,8 +72,39 @@ class DeleteReportForm(FlaskForm):
     report_id = HiddenField(validators=[DataRequired()])
 
 
+class AddWorkTypeForm(FlaskForm):
+    name = StringField('Название', validators=[DataRequired()])
+    description = TextAreaField('Описание', validators=[Optional()])
+    submit = SubmitField('Добавить тип работы')
+
+
+class EditWorkTypeForm(FlaskForm):
+    pass
+
+
+class WorkTypeActionForm(FlaskForm):
+    wt_id = HiddenField(validators=[DataRequired()])
+
+
+# ── Вспомогательные функции ─────────────────────────────────────────────────────
+
+def to_msk(dt):
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = UTC.localize(dt)
+    return dt.astimezone(MSK)
+
+
+def msk_strftime(dt, format='%d.%m.%Y %H:%M'):
+    msk_dt = to_msk(dt)
+    return msk_dt.strftime(format) if msk_dt else ''
+
+
+# ── Миграции ────────────────────────────────────────────────────────────────────
+
 def migrate_reports_organization_fk():
-    """Добавляет organization_id и переносит данные из старого текстового поля organization."""
+    """Переносит старое текстовое поле organization → organization_id FK."""
     db.create_all()
     insp = inspect(db.engine)
     report_table = Report.__tablename__
@@ -110,8 +143,6 @@ def migrate_reports_organization_fk():
         )
     db.session.commit()
 
-    # Старый столбец organization (TEXT NOT NULL) остаётся в SQLite после ALTER; без пересборки
-    # таблицы INSERT в новую схему падает с NOT NULL constraint failed: report.organization
     insp = inspect(db.engine)
     cols = {c['name'] for c in insp.get_columns(report_table)}
     if 'organization' not in cols:
@@ -121,21 +152,23 @@ def migrate_reports_organization_fk():
     with db.engine.begin() as conn:
         conn.execute(
             text(
-                f'CREATE TABLE {tmp} ('
+                f'CREATE TABLE IF NOT EXISTS {tmp} ('
                 'id INTEGER NOT NULL PRIMARY KEY, '
                 'user_id INTEGER NOT NULL, '
                 'organization_id INTEGER NOT NULL, '
+                'work_type_id INTEGER, '
                 'hours_worked REAL NOT NULL, '
                 'description TEXT NOT NULL, '
                 'date_created DATETIME NOT NULL, '
                 'FOREIGN KEY(user_id) REFERENCES users (id), '
-                'FOREIGN KEY(organization_id) REFERENCES organizations (id)'
+                'FOREIGN KEY(organization_id) REFERENCES organizations (id), '
+                'FOREIGN KEY(work_type_id) REFERENCES work_types (id)'
                 ')'
             )
         )
         conn.execute(
             text(
-                f'INSERT INTO {tmp} (id, user_id, organization_id, hours_worked, description, date_created) '
+                f'INSERT OR IGNORE INTO {tmp} (id, user_id, organization_id, hours_worked, description, date_created) '
                 f'SELECT id, user_id, organization_id, hours_worked, description, date_created '
                 f'FROM {report_table} WHERE organization_id IS NOT NULL'
             )
@@ -144,14 +177,57 @@ def migrate_reports_organization_fk():
         conn.execute(text(f'ALTER TABLE {tmp} RENAME TO {report_table}'))
 
 
-# Главная страница
+def migrate_reports_work_type_fk():
+    """Добавляет колонку work_type_id в таблицу report, если её нет."""
+    insp = inspect(db.engine)
+    report_table = Report.__tablename__
+    if report_table not in insp.get_table_names():
+        return
+    cols = {c['name'] for c in insp.get_columns(report_table)}
+    if 'work_type_id' not in cols:
+        with db.engine.begin() as conn:
+            conn.execute(text(f'ALTER TABLE {report_table} ADD COLUMN work_type_id INTEGER REFERENCES work_types(id)'))
+
+
+def seed_default_work_types():
+    """Создаёт предустановленные типы работ, если таблица пуста."""
+    if WorkType.query.first():
+        return
+    defaults = [
+        ('Обычная работа', 'Стандартная рабочая смена'),
+        ('Работа в выходные', 'Работа в субботу или воскресенье'),
+        ('Сверхурочно', 'Работа сверх нормы'),
+        ('Командировка', 'Выездная работа или командировка'),
+    ]
+    for name, desc in defaults:
+        db.session.add(WorkType(name=name, description=desc))
+    db.session.commit()
+    print("Созданы предустановленные типы работ.")
+
+
+# ── Инициализация БД ────────────────────────────────────────────────────────────
+
+with app.app_context():
+    migrate_reports_organization_fk()
+    migrate_reports_work_type_fk()
+    db.create_all()
+    seed_default_work_types()
+    if not User.query.first():
+        admin = User(full_name='Administrator', nickname='admin', role='admin')
+        admin.set_password('admin123')
+        db.session.add(admin)
+        db.session.commit()
+        print("Создан администратор: admin / admin123")
+
+
+# ── Маршруты ────────────────────────────────────────────────────────────────────
+
 @app.route('/')
 @app.route('/first_page')
 def first_page():
     return render_template("first.html")
 
 
-# Регистрация
 @app.route('/registration', methods=['GET', 'POST'])
 def registration():
     if request.method == 'POST':
@@ -160,7 +236,6 @@ def registration():
         password = request.form.get('password')
         confirm = request.form.get('confirm')
 
-        # Валидация
         if not all([full_name, nickname, password]):
             flash('Заполните все поля', 'danger')
         elif password != confirm:
@@ -170,7 +245,6 @@ def registration():
         elif User.query.filter_by(nickname=nickname).first():
             flash('Пользователь с таким ником уже существует', 'danger')
         else:
-            # Создаём нового пользователя
             new_user = User(full_name=full_name, nickname=nickname)
             new_user.set_password(password)
             db.session.add(new_user)
@@ -181,7 +255,6 @@ def registration():
     return render_template("registration.html")
 
 
-# Вход
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
@@ -203,7 +276,6 @@ def login():
     return render_template("login.html")
 
 
-# Панель сотрудника
 @app.route('/workers')
 def workers_panel():
     if 'user_id' not in session or session.get('role') != 'employee':
@@ -222,19 +294,18 @@ def time_report():
 
 @app.route('/my_tasks')
 def my_tasks():
-    # аналогично
     return render_template('my_tasks.html')
 
 
 @app.route('/my_reports')
 def my_reports():
-    # Показываем только отчёты текущего сотрудника.
     if 'user_id' not in session or session.get('role') != 'employee':
         flash('Доступ только для сотрудников', 'warning')
         return redirect(url_for('login'))
 
     reports = (
-        Report.query.options(joinedload(Report.organization))
+        Report.query
+        .options(joinedload(Report.organization), joinedload(Report.work_type))
         .filter_by(user_id=session['user_id'])
         .order_by(Report.date_created.desc())
         .all()
@@ -269,7 +340,6 @@ def settings():
     return render_template('settings.html')
 
 
-# Панель администратора
 @app.route('/admin')
 def admin_panel():
     if 'user_id' not in session or session.get('role') != 'admin':
@@ -293,29 +363,42 @@ def daily_report():
     if 'user_id' not in session or session.get('role') != 'admin':
         flash('Доступ запрещён', 'warning')
         return redirect(url_for('login'))
-    
+
     date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
     date_to = request.args.get('date_to', datetime.now().strftime('%Y-%m-%d'))
-    
+    work_type_filter = request.args.get('work_type_id', '')
+
     try:
         from_dt = datetime.strptime(date_from, '%Y-%m-%d')
         to_dt = datetime.strptime(date_to, '%Y-%m-%d')
         to_dt = datetime(to_dt.year, to_dt.month, to_dt.day, 23, 59, 59)
-        
-        reports = (
-            Report.query.options(joinedload(Report.organization))
+
+        query = (
+            Report.query
+            .options(joinedload(Report.organization), joinedload(Report.work_type))
             .join(User)
             .filter(Report.date_created >= from_dt, Report.date_created <= to_dt)
-            .order_by(Report.date_created.desc())
-            .all()
         )
+        if work_type_filter:
+            query = query.filter(Report.work_type_id == int(work_type_filter))
+
+        reports = query.order_by(Report.date_created.desc()).all()
         total_hours = sum(r.hours_worked for r in reports)
     except ValueError:
         flash('Некорректный формат даты', 'danger')
         reports = []
         total_hours = 0
-    
-    return render_template('daily_report.html', reports=reports, total_hours=total_hours, date_from=date_from, date_to=date_to)
+
+    all_work_types = WorkType.query.order_by(WorkType.name).all()
+    return render_template(
+        'daily_report.html',
+        reports=reports,
+        total_hours=total_hours,
+        date_from=date_from,
+        date_to=date_to,
+        all_work_types=all_work_types,
+        work_type_filter=work_type_filter,
+    )
 
 
 @app.route('/admin/assign_task', methods=['GET', 'POST'])
@@ -326,24 +409,8 @@ def assign_task():
     if request.method == 'POST':
         flash('Функция в разработке', 'info')
         return redirect(url_for('assign_task'))
-    users = User.query.filter_by(role='employee').all()  # только сотрудников
+    users = User.query.filter_by(role='employee').all()
     return render_template('assign_task.html', users=users)
-
-
-def to_msk(dt):
-    """Преобразует datetime из UTC в московское время (МСК)"""
-    if dt is None:
-        return None
-    # Если dt наивное (без timezone), считаем что это UTC
-    if dt.tzinfo is None:
-        dt = UTC.localize(dt)
-    return dt.astimezone(MSK)
-
-
-def msk_strftime(dt, format='%d.%m.%Y %H:%M'):
-    """Форматирует datetime в московское время"""
-    msk_dt = to_msk(dt)
-    return msk_dt.strftime(format) if msk_dt else ''
 
 
 @app.route('/admin/daily_report/export')
@@ -352,79 +419,57 @@ def export_daily_report():
         flash('Доступ запрещён', 'warning')
         return redirect(url_for('login'))
 
-    # Получаем даты из параметров
     date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
     date_to = request.args.get('date_to', datetime.now().strftime('%Y-%m-%d'))
-    
+    work_type_filter = request.args.get('work_type_id', '')
+
     try:
         from_dt = datetime.strptime(date_from, '%Y-%m-%d')
         to_dt = datetime.strptime(date_to, '%Y-%m-%d')
         to_dt = datetime(to_dt.year, to_dt.month, to_dt.day, 23, 59, 59)
-        
-        reports = (
-            Report.query.options(joinedload(Report.organization))
+
+        query = (
+            Report.query
+            .options(joinedload(Report.organization), joinedload(Report.work_type))
             .join(User, Report.user_id == User.id)
             .filter(Report.date_created >= from_dt, Report.date_created <= to_dt)
-            .order_by(Report.date_created.desc())
-            .all()
         )
+        if work_type_filter:
+            query = query.filter(Report.work_type_id == int(work_type_filter))
+
+        reports = query.order_by(Report.date_created.desc()).all()
     except ValueError:
         flash('Некорректный формат даты', 'danger')
         return redirect(url_for('daily_report'))
 
-    # Используем список для данных
-    data = []
-    headers = ['Сотрудник', 'Организация', 'Часов', 'Что выполнено', 'Дата и время']
-    data.append(headers)
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
+
+    writer.writerow(['Сотрудник', 'Организация', 'Тип работы', 'Часов', 'Что выполнено', 'Дата и время'])
 
     for report in reports:
-        # Очищаем описание
         description = report.description.replace('\n', ' ').replace('\r', ' ').replace(',', ';')
-        
-        # Часы как ЧИСЛО (без кавычек)
+
         hours = report.hours_worked
         if isinstance(hours, float) and hours.is_integer():
-            hours = int(hours)
-        
-        # Название организации
-        org_name = report.organization.name if report.organization else report.organization_name_manual
-        
-        # Конвертируем в московское время и форматируем
-        msk_dt = to_msk(report.date_created)
-        if msk_dt:
-            date_str = msk_dt.strftime('%d.%m.%Y %H:%M')
+            hours_str = str(int(hours))
         else:
-            date_str = ''
-        
-        row = [report.user.full_name, org_name, hours, description, date_str]
-        data.append(row)
+            hours_str = str(hours).replace('.', ',')
 
-    # Создаём CSV с правильными настройками
-    import io, csv
-    output = io.StringIO()
-    # Используем QUOTE_NONNUMERIC чтобы числа не оборачивались в кавычки
-    writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
-    
-    for row in data:
-        # Для каждого элемента: если это число - не оборачиваем в кавычки
-        processed_row = []
-        for cell in row:
-            if isinstance(cell, (int, float)):
-                processed_row.append(str(cell).replace('.', ','))  # Для Excel с русской локалью
-            else:
-                processed_row.append(cell)
-        writer.writerow(processed_row)
-    
-    csv_content = output.getvalue()
+        org_name = report.organization.name if report.organization else ''
+        wt_name = report.work_type.name if report.work_type else ''
+
+        msk_dt = to_msk(report.date_created)
+        date_str = msk_dt.strftime('%d.%m.%Y %H:%M') if msk_dt else ''
+
+        writer.writerow([report.user.full_name, org_name, wt_name, hours_str, description, date_str])
+
+    csv_content = '\uFEFF' + output.getvalue()
     output.close()
-    
-    # Добавляем BOM для кириллицы
-    csv_content_with_bom = '\uFEFF' + csv_content
-    
+
     filename = f"report_{date_from}_to_{date_to}.csv"
-    
     return Response(
-        csv_content_with_bom,
+        csv_content,
         mimetype='text/csv; charset=utf-8',
         headers={'Content-Disposition': f'attachment; filename={filename}'}
     )
@@ -476,7 +521,7 @@ def admin_organizations():
                     db.session.commit()
                     flash('Организация удалена', 'success')
             else:
-                flash('Не удалось обработать запрос. Проверьте, что страница не устарела, и попробуйте снова.', 'danger')
+                flash('Не удалось обработать запрос.', 'danger')
             return redirect(url_for('admin_organizations'))
 
     organizations = Organization.query.order_by(Organization.name).all()
@@ -488,7 +533,89 @@ def admin_organizations():
     )
 
 
-# Выход
+# ── Типы работ (CRUD) ────────────────────────────────────────────────────────────
+
+@app.route('/admin/work_types', methods=['GET', 'POST'])
+def admin_work_types():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        flash('Доступ запрещён', 'warning')
+        return redirect(url_for('login'))
+
+    add_form = AddWorkTypeForm()
+    edit_form = EditWorkTypeForm()
+    toggle_form = WorkTypeActionForm()
+    delete_form = WorkTypeActionForm()
+
+    edit_id = request.args.get('edit', type=int)
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'add':
+            if add_form.validate_on_submit():
+                name = add_form.name.data.strip()
+                if WorkType.query.filter_by(name=name).first():
+                    flash('Тип работы с таким названием уже существует', 'danger')
+                else:
+                    wt = WorkType(name=name, description=(add_form.description.data or '').strip())
+                    db.session.add(wt)
+                    db.session.commit()
+                    flash('Тип работы добавлен', 'success')
+                    return redirect(url_for('admin_work_types'))
+
+        elif action == 'edit':
+            wt_id = request.form.get('wt_id', type=int)
+            name = (request.form.get('name') or '').strip()
+            description = (request.form.get('description') or '').strip()
+            if not name:
+                flash('Название не может быть пустым', 'danger')
+            else:
+                wt = db.session.get(WorkType, wt_id)
+                if wt:
+                    existing = WorkType.query.filter_by(name=name).first()
+                    if existing and existing.id != wt.id:
+                        flash('Тип работы с таким названием уже существует', 'danger')
+                    else:
+                        wt.name = name
+                        wt.description = description
+                        db.session.commit()
+                        flash('Тип работы обновлён', 'success')
+            return redirect(url_for('admin_work_types'))
+
+        elif action == 'toggle':
+            wt_id = request.form.get('wt_id', type=int)
+            wt = db.session.get(WorkType, wt_id)
+            if wt:
+                wt.is_active = not wt.is_active
+                db.session.commit()
+                flash(f'Тип «{wt.name}» {"активирован" if wt.is_active else "отключён"}', 'success')
+            return redirect(url_for('admin_work_types'))
+
+        elif action == 'delete':
+            wt_id = request.form.get('wt_id', type=int)
+            wt = db.session.get(WorkType, wt_id)
+            if wt is None:
+                flash('Тип работы не найден', 'danger')
+            elif wt.reports:
+                flash('Нельзя удалить тип, к которому привязаны отчёты', 'danger')
+            else:
+                db.session.delete(wt)
+                db.session.commit()
+                flash('Тип работы удалён', 'success')
+            return redirect(url_for('admin_work_types'))
+
+    work_types = WorkType.query.order_by(WorkType.name).all()
+    return render_template(
+        'admin_work_types.html',
+        work_types=work_types,
+        add_form=add_form,
+        edit_form=edit_form,
+        toggle_form=toggle_form,
+        delete_form=delete_form,
+        edit_id=edit_id,
+    )
+
+
 @app.route('/logout')
 def logout():
     session.clear()
@@ -496,37 +623,29 @@ def logout():
     return redirect(url_for('first_page'))
 
 
-# Создание таблиц и перенос схемы отчётов на связь с организациями
-with app.app_context():
-    migrate_reports_organization_fk()
-    # Создаём администратора по умолчанию, если нет ни одного пользователя
-    if not User.query.first():
-        admin = User(full_name='Administrator', nickname='admin', role='admin')
-        admin.set_password('admin123')
-        db.session.add(admin)
-        db.session.commit()
-        print("Создан администратор: admin / admin123")
-
-
 @app.route('/add_report', methods=['GET', 'POST'])
 def add_report():
-    # Добавлять отчёты могут только авторизованные пользователи.
     if 'user_id' not in session:
         flash('Войдите в систему, чтобы добавить отчёт', 'warning')
         return redirect(url_for('login'))
 
     form = ReportForm()
     organizations = Organization.query.order_by(Organization.name).all()
+    work_types = WorkType.query.filter_by(is_active=True).order_by(WorkType.name).all()
+
+    # Заполняем варианты типов работ для SelectField
+    form.work_type_id.choices = [(wt.id, wt.name) for wt in work_types]
 
     if form.validate_on_submit():
         name = (form.organization.data or '').strip()
         org = Organization.query.filter_by(name=name).first()
         if not org:
-            flash('Выберите организацию из списка подсказок (сначала добавьте её в настройках администратора).', 'danger')
+            flash('Выберите организацию из списка подсказок.', 'danger')
         else:
             report = Report(
                 user_id=session['user_id'],
                 organization_id=org.id,
+                work_type_id=form.work_type_id.data,
                 hours_worked=form.hours_worked.data,
                 description=form.description.data,
             )
@@ -535,7 +654,8 @@ def add_report():
             flash('Отчёт успешно добавлен', 'success')
             return redirect(url_for('workers_panel'))
 
-    return render_template('add_report.html', form=form, organizations=organizations)
+    return render_template('add_report.html', form=form, organizations=organizations, work_types=work_types)
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)

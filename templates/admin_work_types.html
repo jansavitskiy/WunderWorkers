@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+{% block title %}Типы работ{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
+
+{% block body %}
+<div class="admin-dashboard">
+    <h1>🗂 Типы работ</h1>
+    <a href="{{ url_for('admin_panel') }}" class="btn-secondary">← Назад</a>
+
+    <div style="margin-top: 2rem;">
+        <h3>Добавить тип работы</h3>
+        <form method="POST" style="max-width: 520px;" action="{{ url_for('admin_work_types') }}">
+            {{ add_form.hidden_tag() }}
+            <input type="hidden" name="action" value="add">
+            <div class="form-group">
+                <label for="{{ add_form.name.id }}">{{ add_form.name.label.text }}</label>
+                {{ add_form.name(class="form-control", placeholder="Например: Работа в выходные") }}
+                {% for err in add_form.name.errors %}
+                <div class="alert danger">{{ err }}</div>
+                {% endfor %}
+            </div>
+            <div class="form-group">
+                <label for="{{ add_form.description.id }}">{{ add_form.description.label.text }}</label>
+                {{ add_form.description(class="form-control", rows="2", placeholder="Необязательное описание") }}
+            </div>
+            {{ add_form.submit(class="btn-primary") }}
+        </form>
+    </div>
+
+    <div style="margin-top: 2rem;">
+        <h3>Список типов работ</h3>
+        {% if work_types %}
+        <table class="data-table sortable" id="wt-table">
+            <thead>
+                <tr>
+                    <th>Название</th>
+                    <th>Описание</th>
+                    <th>Статус</th>
+                    <th>Отчётов</th>
+                    <th>Создан</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for wt in work_types %}
+                <tr>
+                    <td>
+                        {% if edit_id == wt.id %}
+                        <form method="POST" action="{{ url_for('admin_work_types') }}" style="display:flex;gap:6px;align-items:center;">
+                            {{ edit_form.hidden_tag() }}
+                            <input type="hidden" name="action" value="edit">
+                            <input type="hidden" name="wt_id" value="{{ wt.id }}">
+                            <input type="text" name="name" value="{{ wt.name }}" class="form-control" style="width:160px;display:inline;padding:6px 12px;margin:0;">
+                            <input type="text" name="description" value="{{ wt.description }}" class="form-control" style="width:180px;display:inline;padding:6px 12px;margin:0;" placeholder="Описание">
+                            <button type="submit" class="btn-primary" style="padding:6px 14px;">Сохранить</button>
+                            <a href="{{ url_for('admin_work_types') }}" class="btn-secondary" style="padding:6px 14px;">Отмена</a>
+                        </form>
+                        {% else %}
+                        {{ wt.name }}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if edit_id != wt.id %}{{ wt.description or '—' }}{% endif %}
+                    </td>
+                    <td>
+                        <span class="badge {{ 'badge-active' if wt.is_active else 'badge-inactive' }}">
+                            {{ 'Активен' if wt.is_active else 'Отключён' }}
+                        </span>
+                    </td>
+                    <td>{{ wt.reports|length }}</td>
+                    <td>{{ wt.created_at.strftime('%d.%m.%Y') }}</td>
+                    <td style="white-space:nowrap;">
+                        {% if edit_id != wt.id %}
+                        <a href="{{ url_for('admin_work_types', edit=wt.id) }}" class="btn-secondary" style="padding:5px 12px;font-size:0.85rem;">✏️ Ред.</a>
+
+                        <form method="POST" action="{{ url_for('admin_work_types') }}" style="display:inline;">
+                            {{ toggle_form.hidden_tag() }}
+                            <input type="hidden" name="action" value="toggle">
+                            <input type="hidden" name="wt_id" value="{{ wt.id }}">
+                            <button type="submit" class="{{ 'btn-secondary' if wt.is_active else 'btn-primary' }}" style="padding:5px 12px;font-size:0.85rem;">
+                                {{ '⏸ Откл.' if wt.is_active else '▶ Вкл.' }}
+                            </button>
+                        </form>
+
+                        <form method="POST" action="{{ url_for('admin_work_types') }}" style="display:inline;"
+                              onsubmit="return confirm('Удалить тип «{{ wt.name }}»? Это действие необратимо.');">
+                            {{ delete_form.hidden_tag() }}
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="wt_id" value="{{ wt.id }}">
+                            <button type="submit" class="btn-danger" style="padding:5px 12px;font-size:0.85rem;"
+                                    {% if wt.reports %}disabled title="Есть привязанные отчёты"{% endif %}>
+                                🗑 Удалить
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p>Пока нет типов работ. Добавьте первый выше — он появится в форме отчёта сотрудника.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
+{% endblock %}

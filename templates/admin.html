@@ -22,10 +22,20 @@
             <h3>Отчёты</h3>
             <p>Выбор диапазона дат и выгрузка в Excel</p>
         </a>
+        <a href="{{ url_for('admin_work_types') }}" class="admin-card">
+            <div class="card-icon">🗂</div>
+            <h3>Типы работ</h3>
+            <p>Управление категориями рабочих активностей</p>
+        </a>
         <a href="{{ url_for('assign_task') }}" class="admin-card">
             <div class="card-icon">⏱️</div>
             <h3>Поставить задачу</h3>
             <p>Назначить задачу сотруднику</p>
+        </a>
+        <a href="{{ url_for('admin_organizations') }}" class="admin-card">
+            <div class="card-icon">🏢</div>
+            <h3>Организации</h3>
+            <p>Управление списком организаций</p>
         </a>
         <a href="{{ url_for('admin_settings') }}" class="admin-card">
             <div class="card-icon">⚙️</div>
