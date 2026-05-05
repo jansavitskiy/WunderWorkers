@@ -293,31 +293,30 @@ def daily_report():
     if 'user_id' not in session or session.get('role') != 'admin':
         flash('Доступ запрещён', 'warning')
         return redirect(url_for('login'))
-    selected_date = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
-    reports = []
-    total_hours = 0.0
-
+    
+    date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
+    date_to = request.args.get('date_to', datetime.now().strftime('%Y-%m-%d'))
+    
     try:
-        date_from = datetime.strptime(selected_date, '%Y-%m-%d')
-        date_to = datetime(date_from.year, date_from.month, date_from.day, 23, 59, 59, 999999)
+        from_dt = datetime.strptime(date_from, '%Y-%m-%d')
+        to_dt = datetime.strptime(date_to, '%Y-%m-%d')
+        to_dt = datetime(to_dt.year, to_dt.month, to_dt.day, 23, 59, 59)
+        
         reports = (
             Report.query.options(joinedload(Report.organization))
-            .join(User, Report.user_id == User.id)
-            .filter(Report.date_created >= date_from, Report.date_created <= date_to)
+            .join(User)
+            .filter(Report.date_created >= from_dt, Report.date_created <= to_dt)
             .order_by(Report.date_created.desc())
             .all()
         )
-        total_hours = sum(report.hours_worked for report in reports)
+        total_hours = sum(r.hours_worked for r in reports)
     except ValueError:
         flash('Некорректный формат даты', 'danger')
-        selected_date = datetime.now().strftime('%Y-%m-%d')
+        reports = []
+        total_hours = 0
+    
+    return render_template('daily_report.html', reports=reports, total_hours=total_hours, date_from=date_from, date_to=date_to)
 
-    return render_template(
-        'daily_report.html',
-        today=selected_date,
-        reports=reports,
-        total_hours=total_hours
-    )
 
 
 @app.route('/admin/assign_task', methods=['GET', 'POST'])
@@ -352,22 +351,25 @@ def export_daily_report():
     if 'user_id' not in session or session.get('role') != 'admin':
         flash('Доступ запрещён', 'warning')
         return redirect(url_for('login'))
-
-    selected_date = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+    
+    date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
+    date_to = request.args.get('date_to', datetime.now().strftime('%Y-%m-%d'))
+    
     try:
-        date_from = datetime.strptime(selected_date, '%Y-%m-%d')
+        from_dt = datetime.strptime(date_from, '%Y-%m-%d')
+        to_dt = datetime.strptime(date_to, '%Y-%m-%d')
+        to_dt = datetime(to_dt.year, to_dt.month, to_dt.day, 23, 59, 59, 999999)
+        
+        reports = (
+            Report.query.options(joinedload(Report.organization))
+            .join(User, Report.user_id == User.id)
+            .filter(Report.date_created >= from_dt, Report.date_created <= to_dt)
+            .order_by(Report.date_created.desc())
+            .all()
+        )
     except ValueError:
         flash('Некорректный формат даты', 'danger')
         return redirect(url_for('daily_report'))
-
-    date_to = datetime(date_from.year, date_from.month, date_from.day, 23, 59, 59, 999999)
-    reports = (
-        Report.query.options(joinedload(Report.organization))
-        .join(User, Report.user_id == User.id)
-        .filter(Report.date_created >= date_from, Report.date_created <= date_to)
-        .order_by(Report.date_created.desc())
-        .all()
-    )
 
     # Подготовка данных для CSV
     data = []
@@ -400,7 +402,12 @@ def export_daily_report():
     # Добавляем BOM для правильной кодировки кириллицы в Excel
     csv_content_with_bom = '\uFEFF' + csv_content
 
-    filename = f"daily_reports_{selected_date}.csv"
+    # Формируем имя файла с диапазоном дат
+    if date_from == date_to:
+        filename = f"daily_reports_{date_from}.csv"
+    else:
+        filename = f"daily_reports_{date_from}_to_{date_to}.csv"
+    
     return Response(
         csv_content_with_bom,
         mimetype='text/csv; charset=utf-8',
