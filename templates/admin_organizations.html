@@ -72,11 +72,13 @@
                         <a href="{{ url_for('admin_organizations', edit=org.id) }}"
                            class="btn-secondary" style="padding:5px 12px;font-size:0.85rem;">✏️ Ред.</a>
                         <form method="POST" style="display: inline;"
-                              onsubmit="return confirmDelete('{{ org.name }}', {{ org.reports|length }})">
+                              data-org-name="{{ org.name }}"
+                              data-report-count="{{ org.reports|length }}">
                             {{ delete_form.hidden_tag('csrf_token') }}
                             <input type="hidden" name="action" value="delete">
                             <input type="hidden" name="org_id" value="{{ org.id }}">
-                            <button type="submit" class="btn-danger" style="padding:5px 12px;font-size:0.85rem;">
+                            <button type="submit" class="btn-danger" style="padding:5px 12px;font-size:0.85rem;"
+                                    onclick="return confirmDeleteForm(this.closest('form'))">
                                 🗑 Удалить
                             </button>
                         </form>
@@ -95,7 +97,9 @@
 {% block extra_js %}
 <script src="{{ url_for('static', filename='admin.js') }}"></script>
 <script>
-function confirmDelete(name, reportCount) {
+function confirmDeleteForm(form) {
+    const name = form.dataset.orgName;
+    const reportCount = parseInt(form.dataset.reportCount, 10);
     if (reportCount > 0) {
         return confirm(
             'Удалить организацию «' + name + '»?\n\n' +
