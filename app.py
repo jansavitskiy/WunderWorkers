@@ -36,6 +36,7 @@ class Report(db.Model):
     work_type_id = db.Column(db.Integer, db.ForeignKey('work_types.id'), nullable=True)
     hours_worked = db.Column(db.Float, nullable=False)
     description = db.Column(db.Text, nullable=False)
+    work_date = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     date_created = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     user = db.relationship('User', backref=db.backref('reports', lazy=True))
@@ -201,6 +202,18 @@ def migrate_organizations_inn():
             conn.execute(text("ALTER TABLE organizations ADD COLUMN inn VARCHAR(12) DEFAULT ''"))
 
 
+def migrate_report_work_date():
+    """Добавляет work_date в таблицу report. Существующим отчётам ставит work_date = date_created."""
+    insp = inspect(db.engine)
+    if 'report' not in insp.get_table_names():
+        return
+    cols = {c['name'] for c in insp.get_columns('report')}
+    if 'work_date' not in cols:
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE report ADD COLUMN work_date DATETIME"))
+            conn.execute(text("UPDATE report SET work_date = date_created WHERE work_date IS NULL"))
+
+
 def seed_default_work_types():
     """Создаёт предустановленные типы работ, если таблица пуста."""
     if WorkType.query.first():
@@ -223,6 +236,7 @@ with app.app_context():
     migrate_reports_organization_fk()
     migrate_reports_work_type_fk()
     migrate_organizations_inn()
+    migrate_report_work_date()
     db.create_all()
     seed_default_work_types()
     if not User.query.first():
@@ -383,19 +397,20 @@ def daily_report():
 
     try:
         from_dt = datetime.strptime(date_from, '%Y-%m-%d')
-        to_dt = datetime.strptime(date_to, '%Y-%m-%d')
-        to_dt = datetime(to_dt.year, to_dt.month, to_dt.day, 23, 59, 59)
+        to_dt = datetime(
+            *datetime.strptime(date_to, '%Y-%m-%d').timetuple()[:3], 23, 59, 59
+        )
 
         query = (
             Report.query
             .options(joinedload(Report.organization), joinedload(Report.work_type))
             .join(User)
-            .filter(Report.date_created >= from_dt, Report.date_created <= to_dt)
+            .filter(Report.work_date >= from_dt, Report.work_date <= to_dt)
         )
         if work_type_filter:
             query = query.filter(Report.work_type_id == int(work_type_filter))
 
-        reports = query.order_by(Report.date_created.desc()).all()
+        reports = query.order_by(Report.work_date.desc()).all()
         total_hours = sum(r.hours_worked for r in reports)
     except ValueError:
         flash('Некорректный формат даты', 'danger')
@@ -438,19 +453,20 @@ def export_daily_report():
 
     try:
         from_dt = datetime.strptime(date_from, '%Y-%m-%d')
-        to_dt = datetime.strptime(date_to, '%Y-%m-%d')
-        to_dt = datetime(to_dt.year, to_dt.month, to_dt.day, 23, 59, 59)
+        to_dt = datetime(
+            *datetime.strptime(date_to, '%Y-%m-%d').timetuple()[:3], 23, 59, 59
+        )
 
         query = (
             Report.query
             .options(joinedload(Report.organization), joinedload(Report.work_type))
             .join(User, Report.user_id == User.id)
-            .filter(Report.date_created >= from_dt, Report.date_created <= to_dt)
+            .filter(Report.work_date >= from_dt, Report.work_date <= to_dt)
         )
         if work_type_filter:
             query = query.filter(Report.work_type_id == int(work_type_filter))
 
-        reports = query.order_by(Report.date_created.desc()).all()
+        reports = query.order_by(Report.work_date.desc()).all()
     except ValueError:
         flash('Некорректный формат даты', 'danger')
         return redirect(url_for('daily_report'))
@@ -458,7 +474,7 @@ def export_daily_report():
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
 
-    writer.writerow(['Сотрудник', 'Организация', 'ИНН', 'Тип работы', 'Часов', 'Что выполнено', 'Дата и время'])
+    writer.writerow(['Сотрудник', 'Организация', 'ИНН', 'Тип работы', 'Часов', 'Что выполнено', 'Дата работы', 'Дата создания'])
 
     for report in reports:
         description = report.description.replace('\n', ' ').replace('\r', ' ').replace(',', ';')
@@ -470,14 +486,18 @@ def export_daily_report():
             hours_str = str(hours).replace('.', ',')
 
         org_name = report.organization.name if report.organization else ''
-        # ИНН выводится как текст чтобы сохранить ведущие нули
         inn = report.organization.inn if report.organization and report.organization.inn else ''
         wt_name = report.work_type.name if report.work_type else ''
 
-        msk_dt = to_msk(report.date_created)
-        date_str = msk_dt.strftime('%d.%m.%Y %H:%M') if msk_dt else ''
+        # Дата работы — только дата (ДД.ММ.ГГГГ) в МСК
+        msk_work = to_msk(report.work_date) if report.work_date else None
+        work_date_str = msk_work.strftime('%d.%m.%Y') if msk_work else ''
 
-        writer.writerow([report.user.full_name, org_name, inn, wt_name, hours_str, description, date_str])
+        # Дата создания — дата + время в МСК
+        msk_created = to_msk(report.date_created)
+        created_str = msk_created.strftime('%d.%m.%Y %H:%M') if msk_created else ''
+
+        writer.writerow([report.user.full_name, org_name, inn, wt_name, hours_str, description, work_date_str, created_str])
 
     csv_content = '\uFEFF' + output.getvalue()
     output.close()
@@ -690,25 +710,38 @@ def add_report():
     # Заполняем варианты типов работ для SelectField
     form.work_type_id.choices = [(wt.id, wt.name) for wt in work_types]
 
+    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+
     if form.validate_on_submit():
         name = (form.organization.data or '').strip()
         org = Organization.query.filter_by(name=name).first()
         if not org:
             flash('Выберите организацию из списка подсказок.', 'danger')
         else:
+            # Парсим дату работы из формы; если не указана — берём сегодня
+            raw_date = request.form.get('work_date', '').strip()
+            try:
+                work_date = datetime.strptime(raw_date, '%Y-%m-%d') if raw_date else datetime.utcnow()
+                # Запрещаем будущие даты
+                if work_date.date() > datetime.utcnow().date():
+                    work_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+            except ValueError:
+                work_date = datetime.utcnow()
+
             report = Report(
                 user_id=session['user_id'],
                 organization_id=org.id,
                 work_type_id=form.work_type_id.data,
                 hours_worked=form.hours_worked.data,
                 description=form.description.data,
+                work_date=work_date,
             )
             db.session.add(report)
             db.session.commit()
             flash('Отчёт успешно добавлен', 'success')
             return redirect(url_for('workers_panel'))
 
-    return render_template('add_report.html', form=form, organizations=organizations, work_types=work_types)
+    return render_template('add_report.html', form=form, organizations=organizations, work_types=work_types, today=today_str)
 
 
 if __name__ == '__main__':

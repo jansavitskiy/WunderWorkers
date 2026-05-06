@@ -9,31 +9,33 @@
     <a href="{{ url_for('workers_panel') }}" class="btn-secondary">← Назад</a>
 
 {% if reports %}
-<table class="data-table" style="margin: 1rem 0;">
+    <table class="data-table" style="margin:1rem 0;">
         <thead>
             <tr>
-                <th>Дата (МСК)</th>
+                <th>Дата работы</th>
                 <th>Организация</th>
                 <th>Тип работы</th>
                 <th>Часы</th>
                 <th>Что выполнено</th>
+                <th>Создан (МСК)</th>
                 <th></th>
             </tr>
         </thead>
         <tbody>
             {% for report in reports %}
                 <tr>
-                    <td>{{ report.date_created|msk }}</td>
+                    <td><strong>{{ report.work_date|msk if report.work_date else report.date_created|msk }}</strong></td>
                     <td>{{ report.organization.name }}</td>
                     <td>{{ report.work_type.name if report.work_type else '—' }}</td>
                     <td>{{ report.hours_worked }}</td>
                     <td>{{ report.description }}</td>
+                    <td style="color:#9ca3af;font-size:0.9rem;">{{ report.date_created|msk }}</td>
                     <td>
-                        <form method="POST" action="{{ url_for('delete_my_report') }}" style="display: inline;"
-                              onsubmit="return confirm('Удалить этот отчёт? Это действие нельзя отменить.');">
+                        <form method="POST" action="{{ url_for('delete_my_report') }}" style="display:inline;"
+                              onsubmit="return confirm('Удалить этот отчёт?');">
                             {{ delete_form.hidden_tag('csrf_token') }}
                             <input type="hidden" name="report_id" value="{{ report.id }}">
-                            <button type="submit" class="btn-danger" style="padding: 6px 12px; font-size: 0.9rem;">Удалить</button>
+                            <button type="submit" class="btn-danger" style="padding:6px 12px;font-size:0.9rem;">Удалить</button>
                         </form>
                     </td>
                 </tr>
@@ -41,7 +43,7 @@
         </tbody>
     </table>
 {% else %}
-    <p style="margin-top: 1rem;">У вас пока нет отчётов.</p>
+    <p style="margin-top:1rem;">У вас пока нет отчётов.</p>
 {% endif %}
 </div>
 {% endblock %}

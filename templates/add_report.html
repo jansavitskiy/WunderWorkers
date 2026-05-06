@@ -15,6 +15,16 @@
     {{ form.hidden_tag() }}
 
     <div class="form-group">
+        <label for="work_date">Дата выполнения работы</label>
+        <input type="date" id="work_date" name="work_date"
+               class="form-control"
+               value="{{ today }}"
+               max="{{ today }}"
+               required>
+        <div id="date-warning" style="margin-top:6px;font-size:0.88rem;color:#f59e0b;min-height:1.2em;"></div>
+    </div>
+
+    <div class="form-group">
         <label for="{{ form.organization.id }}">{{ form.organization.label.text }}</label>
         {{ form.organization(class="form-control", id="org-input",
            placeholder="Начните вводить или выберите из списка",
@@ -26,7 +36,7 @@
         </datalist>
         <div id="inn-hint" style="margin-top:6px;font-size:0.9rem;color:#6c757d;min-height:1.2em;"></div>
         {% if not organizations %}
-        <p class="text-muted" style="margin-top: 0.5rem;">Пока нет организаций. Попросите администратора добавить их.</p>
+        <p class="text-muted" style="margin-top:0.5rem;">Нет организаций. Попросите администратора добавить их.</p>
         {% endif %}
         {% for error in form.organization.errors %}
             <div class="alert danger">{{ error }}</div>
@@ -37,7 +47,7 @@
         <label for="{{ form.work_type_id.id }}">{{ form.work_type_id.label.text }}</label>
         {{ form.work_type_id(class="form-control") }}
         {% if not work_types %}
-        <p class="text-muted" style="margin-top: 0.5rem;">Нет активных типов работ. Попросите администратора добавить их.</p>
+        <p class="text-muted" style="margin-top:0.5rem;">Нет активных типов работ. Попросите администратора добавить их.</p>
         {% endif %}
         {% for error in form.work_type_id.errors %}
             <div class="alert danger">{{ error }}</div>
@@ -65,7 +75,7 @@
 </div>
 
 <script>
-// Карта: название организации → ИНН (из данных сервера)
+// Карта: название организации → ИНН
 const orgInnMap = {
     {% for org in organizations %}
     {{ org.name | tojson }}: {{ (org.inn or '') | tojson }}{% if not loop.last %},{% endif %}
@@ -73,23 +83,37 @@ const orgInnMap = {
 };
 
 const orgInput = document.getElementById('org-input');
-const innHint = document.getElementById('inn-hint');
+const innHint  = document.getElementById('inn-hint');
 
 function updateInnHint() {
     const name = orgInput.value.trim();
-    const inn = orgInnMap[name];
-    if (inn) {
-        innHint.textContent = 'ИНН организации: ' + inn;
-        innHint.style.color = '#374151';
-    } else if (name && inn === '') {
-        innHint.textContent = 'ИНН не указан';
-        innHint.style.color = '#9ca3af';
-    } else {
-        innHint.textContent = '';
-    }
+    const inn  = orgInnMap[name];
+    if (inn)           { innHint.textContent = 'ИНН организации: ' + inn; innHint.style.color = '#374151'; }
+    else if (name !== undefined && inn === '') { innHint.textContent = 'ИНН не указан'; innHint.style.color = '#9ca3af'; }
+    else               { innHint.textContent = ''; }
 }
-
-orgInput.addEventListener('input', updateInnHint);
+orgInput.addEventListener('input',  updateInnHint);
 orgInput.addEventListener('change', updateInnHint);
+
+// Ограничение и предупреждение для поля даты
+const dateInput   = document.getElementById('work_date');
+const dateWarning = document.getElementById('date-warning');
+const today       = new Date().toISOString().slice(0, 10);
+
+dateInput.max = today;
+
+dateInput.addEventListener('change', function () {
+    const selected = new Date(this.value);
+    const now      = new Date(today);
+    const diffDays = Math.round((now - selected) / 86400000);
+    if (this.value > today) {
+        this.value = today;
+        dateWarning.textContent = 'Нельзя выбрать будущую дату.';
+    } else if (diffDays > 30) {
+        dateWarning.textContent = '⚠️ Выбрана дата более 30 дней назад — убедитесь, что это правильно.';
+    } else {
+        dateWarning.textContent = '';
+    }
+});
 </script>
 {% endblock %}
