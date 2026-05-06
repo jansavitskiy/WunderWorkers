@@ -586,12 +586,16 @@ def admin_organizations():
                 org = db.session.get(Organization, int(delete_form.org_id.data))
                 if org is None:
                     flash('Организация не найдена', 'danger')
-                elif Report.query.filter_by(organization_id=org.id).first():
-                    flash('Нельзя удалить организацию, пока к ней привязаны отчёты', 'danger')
                 else:
+                    report_count = Report.query.filter_by(organization_id=org.id).count()
+                    # Каскадно удаляем все привязанные отчёты, затем организацию
+                    Report.query.filter_by(organization_id=org.id).delete()
                     db.session.delete(org)
                     db.session.commit()
-                    flash('Организация удалена', 'success')
+                    if report_count:
+                        flash(f'Организация удалена вместе с {report_count} отчётами', 'success')
+                    else:
+                        flash('Организация удалена', 'success')
             else:
                 flash('Не удалось обработать запрос.', 'danger')
             return redirect(url_for('admin_organizations'))

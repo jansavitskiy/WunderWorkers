@@ -72,12 +72,11 @@
                         <a href="{{ url_for('admin_organizations', edit=org.id) }}"
                            class="btn-secondary" style="padding:5px 12px;font-size:0.85rem;">✏️ Ред.</a>
                         <form method="POST" style="display: inline;"
-                              onsubmit="return confirm('Удалить организацию «{{ org.name }}»?');">
+                              onsubmit="return confirmDelete('{{ org.name }}', {{ org.reports|length }})">
                             {{ delete_form.hidden_tag('csrf_token') }}
                             <input type="hidden" name="action" value="delete">
                             <input type="hidden" name="org_id" value="{{ org.id }}">
-                            <button type="submit" class="btn-danger" style="padding:5px 12px;font-size:0.85rem;"
-                                    {% if org.reports %}disabled title="Есть привязанные отчёты"{% endif %}>
+                            <button type="submit" class="btn-danger" style="padding:5px 12px;font-size:0.85rem;">
                                 🗑 Удалить
                             </button>
                         </form>
@@ -95,4 +94,17 @@
 {% endblock %}
 {% block extra_js %}
 <script src="{{ url_for('static', filename='admin.js') }}"></script>
+<script>
+function confirmDelete(name, reportCount) {
+    if (reportCount > 0) {
+        return confirm(
+            'Удалить организацию «' + name + '»?\n\n' +
+            '⚠️ Вместе с ней будут безвозвратно удалены ' + reportCount +
+            ' отчёт(ов), привязанных к этой организации.\n\n' +
+            'Это действие нельзя отменить.'
+        );
+    }
+    return confirm('Удалить организацию «' + name + '»?');
+}
+</script>
 {% endblock %}
