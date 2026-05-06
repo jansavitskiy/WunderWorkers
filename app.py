@@ -61,6 +61,7 @@ class ReportForm(FlaskForm):
 
 class AddOrganizationForm(FlaskForm):
     name = StringField('Название', validators=[DataRequired()])
+    inn = StringField('ИНН', validators=[Optional()])
     submit = SubmitField('Добавить организацию')
 
 
@@ -189,6 +190,17 @@ def migrate_reports_work_type_fk():
             conn.execute(text(f'ALTER TABLE {report_table} ADD COLUMN work_type_id INTEGER REFERENCES work_types(id)'))
 
 
+def migrate_organizations_inn():
+    """Добавляет колонку inn в таблицу organizations, если её нет."""
+    insp = inspect(db.engine)
+    if 'organizations' not in insp.get_table_names():
+        return
+    cols = {c['name'] for c in insp.get_columns('organizations')}
+    if 'inn' not in cols:
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE organizations ADD COLUMN inn VARCHAR(12) DEFAULT ''"))
+
+
 def seed_default_work_types():
     """Создаёт предустановленные типы работ, если таблица пуста."""
     if WorkType.query.first():
@@ -210,6 +222,7 @@ def seed_default_work_types():
 with app.app_context():
     migrate_reports_organization_fk()
     migrate_reports_work_type_fk()
+    migrate_organizations_inn()
     db.create_all()
     seed_default_work_types()
     if not User.query.first():
@@ -445,7 +458,7 @@ def export_daily_report():
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
 
-    writer.writerow(['Сотрудник', 'Организация', 'Тип работы', 'Часов', 'Что выполнено', 'Дата и время'])
+    writer.writerow(['Сотрудник', 'Организация', 'ИНН', 'Тип работы', 'Часов', 'Что выполнено', 'Дата и время'])
 
     for report in reports:
         description = report.description.replace('\n', ' ').replace('\r', ' ').replace(',', ';')
@@ -457,12 +470,14 @@ def export_daily_report():
             hours_str = str(hours).replace('.', ',')
 
         org_name = report.organization.name if report.organization else ''
+        # ИНН выводится как текст чтобы сохранить ведущие нули
+        inn = report.organization.inn if report.organization and report.organization.inn else ''
         wt_name = report.work_type.name if report.work_type else ''
 
         msk_dt = to_msk(report.date_created)
         date_str = msk_dt.strftime('%d.%m.%Y %H:%M') if msk_dt else ''
 
-        writer.writerow([report.user.full_name, org_name, wt_name, hours_str, description, date_str])
+        writer.writerow([report.user.full_name, org_name, inn, wt_name, hours_str, description, date_str])
 
     csv_content = '\uFEFF' + output.getvalue()
     output.close()
@@ -486,6 +501,18 @@ def admin_settings():
     return render_template('admin_settings.html')
 
 
+def _validate_inn(inn):
+    """Возвращает (очищенный ИНН, ошибка). Допускает пустую строку."""
+    inn = (inn or '').strip()
+    if not inn:
+        return '', None
+    if not inn.isdigit():
+        return inn, 'ИНН должен состоять только из цифр'
+    if len(inn) not in (10, 12):
+        return inn, 'ИНН должен содержать 10 или 12 цифр'
+    return inn, None
+
+
 @app.route('/admin/organizations', methods=['GET', 'POST'])
 def admin_organizations():
     if 'user_id' not in session or session.get('role') != 'admin':
@@ -494,22 +521,47 @@ def admin_organizations():
 
     add_form = AddOrganizationForm()
     delete_form = DeleteOrganizationForm()
+    edit_org_id = request.args.get('edit', type=int)
 
     if request.method == 'POST':
         action = request.form.get('action')
+
         if action == 'add':
-            add_form = AddOrganizationForm()
             if add_form.validate_on_submit():
                 name = add_form.name.data.strip()
-                if Organization.query.filter_by(name=name).first():
+                inn, err = _validate_inn(add_form.inn.data)
+                if err:
+                    flash(err, 'danger')
+                elif Organization.query.filter_by(name=name).first():
                     flash('Организация с таким названием уже существует', 'danger')
                 else:
-                    db.session.add(Organization(name=name))
+                    db.session.add(Organization(name=name, inn=inn))
                     db.session.commit()
                     flash('Организация добавлена', 'success')
                     return redirect(url_for('admin_organizations'))
+
+        elif action == 'edit':
+            org_id = request.form.get('org_id', type=int)
+            name = (request.form.get('name') or '').strip()
+            inn, err = _validate_inn(request.form.get('inn'))
+            if not name:
+                flash('Название не может быть пустым', 'danger')
+            elif err:
+                flash(err, 'danger')
+            else:
+                org = db.session.get(Organization, org_id)
+                if org:
+                    existing = Organization.query.filter_by(name=name).first()
+                    if existing and existing.id != org.id:
+                        flash('Организация с таким названием уже существует', 'danger')
+                    else:
+                        org.name = name
+                        org.inn = inn
+                        db.session.commit()
+                        flash('Организация обновлена', 'success')
+            return redirect(url_for('admin_organizations'))
+
         elif action == 'delete':
-            delete_form = DeleteOrganizationForm()
             if delete_form.validate():
                 org = db.session.get(Organization, int(delete_form.org_id.data))
                 if org is None:
@@ -530,6 +582,8 @@ def admin_organizations():
         organizations=organizations,
         add_form=add_form,
         delete_form=delete_form,
+        edit_org_id=edit_org_id,
+        edit_form=add_form,
     )
 
 

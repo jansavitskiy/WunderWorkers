@@ -16,12 +16,15 @@
 
     <div class="form-group">
         <label for="{{ form.organization.id }}">{{ form.organization.label.text }}</label>
-        {{ form.organization(class="form-control", placeholder="Начните вводить или выберите из списка", list="org-list", autocomplete="off") }}
+        {{ form.organization(class="form-control", id="org-input",
+           placeholder="Начните вводить или выберите из списка",
+           list="org-list", autocomplete="off") }}
         <datalist id="org-list">
             {% for org in organizations %}
             <option value="{{ org.name }}">
             {% endfor %}
         </datalist>
+        <div id="inn-hint" style="margin-top:6px;font-size:0.9rem;color:#6c757d;min-height:1.2em;"></div>
         {% if not organizations %}
         <p class="text-muted" style="margin-top: 0.5rem;">Пока нет организаций. Попросите администратора добавить их.</p>
         {% endif %}
@@ -60,4 +63,33 @@
     {{ form.submit(class="btn-primary") }}
 </form>
 </div>
+
+<script>
+// Карта: название организации → ИНН (из данных сервера)
+const orgInnMap = {
+    {% for org in organizations %}
+    {{ org.name | tojson }}: {{ (org.inn or '') | tojson }}{% if not loop.last %},{% endif %}
+    {% endfor %}
+};
+
+const orgInput = document.getElementById('org-input');
+const innHint = document.getElementById('inn-hint');
+
+function updateInnHint() {
+    const name = orgInput.value.trim();
+    const inn = orgInnMap[name];
+    if (inn) {
+        innHint.textContent = 'ИНН организации: ' + inn;
+        innHint.style.color = '#374151';
+    } else if (name && inn === '') {
+        innHint.textContent = 'ИНН не указан';
+        innHint.style.color = '#9ca3af';
+    } else {
+        innHint.textContent = '';
+    }
+}
+
+orgInput.addEventListener('input', updateInnHint);
+orgInput.addEventListener('change', updateInnHint);
+</script>
 {% endblock %}

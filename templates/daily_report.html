@@ -41,6 +41,7 @@
                 <tr>
                     <th>Сотрудник</th>
                     <th>Организация</th>
+                    <th>ИНН</th>
                     <th>Тип работы</th>
                     <th>Часов</th>
                     <th>Что выполнено</th>
@@ -52,6 +53,7 @@
                     <tr>
                         <td>{{ report.user.full_name }}</td>
                         <td>{{ report.organization.name }}</td>
+                        <td>{{ report.organization.inn if report.organization.inn else '—' }}</td>
                         <td>{{ report.work_type.name if report.work_type else '—' }}</td>
                         <td>{{ report.hours_worked }}</td>
                         <td>{{ report.description }}</td>
