@@ -1,0 +1,129 @@
+{% extends 'base.html' %}
+{% block title %}Типы ставок{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
+
+{% block body %}
+<div class="admin-dashboard">
+    <h1>💰 Типы ставок</h1>
+    <a href="{{ url_for('admin_panel') }}" class="btn-secondary">← Назад</a>
+
+    <p style="margin-top:1rem;color:#6b7280;">
+        Создайте категории рабочих дней с разными ставками. Сотрудник выбирает нужный тип при заполнении отчёта.
+        Сумма рассчитывается как <strong>часы × ставка выбранного типа</strong>.
+    </p>
+
+    <div style="margin-top:2rem;">
+        <h3>Добавить тип ставки</h3>
+        <form method="POST" style="max-width:520px;">
+            {{ add_form.hidden_tag() }}
+            <input type="hidden" name="action" value="add">
+            <div class="form-group">
+                <label>Название</label>
+                {{ add_form.name(class="form-control", placeholder="Например: Будни, Выходные, Командировка") }}
+                {% for err in add_form.name.errors %}
+                <div class="alert danger">{{ err }}</div>
+                {% endfor %}
+            </div>
+            <div class="form-group">
+                <label>Ставка (₽/час)</label>
+                {{ add_form.rate_per_hour(class="form-control", placeholder="Например: 1250", min="0", step="50") }}
+                {% for err in add_form.rate_per_hour.errors %}
+                <div class="alert danger">{{ err }}</div>
+                {% endfor %}
+            </div>
+            {{ add_form.submit(class="btn-primary") }}
+        </form>
+    </div>
+
+    <div style="margin-top:2rem;">
+        <h3>Список типов ставок</h3>
+        {% if rate_types %}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>Название</th>
+                    <th>Ставка (₽/час)</th>
+                    <th>Статус</th>
+                    <th>Отчётов</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for rt in rate_types %}
+                <tr {% if not rt.is_active %}style="opacity:0.55;"{% endif %}>
+                    {% if edit_id == rt.id %}
+                    <td colspan="5">
+                        <form method="POST" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                            {{ add_form.hidden_tag() }}
+                            <input type="hidden" name="action" value="edit">
+                            <input type="hidden" name="rt_id" value="{{ rt.id }}">
+                            <input type="text" name="name" value="{{ rt.name }}" class="form-control"
+                                   style="width:180px;display:inline;padding:6px 12px;margin:0;" placeholder="Название">
+                            <input type="number" name="rate_per_hour" value="{{ rt.rate_per_hour }}" class="form-control"
+                                   style="width:120px;display:inline;padding:6px 12px;margin:0;" min="0" step="50" placeholder="₽/час">
+                            <button type="submit" class="btn-primary" style="padding:6px 14px;">Сохранить</button>
+                            <a href="{{ url_for('admin_rate_types') }}" class="btn-secondary" style="padding:6px 14px;">Отмена</a>
+                        </form>
+                    </td>
+                    {% else %}
+                    <td><strong>{{ rt.name }}</strong></td>
+                    <td>{{ rt.rate_per_hour|int }} ₽/час</td>
+                    <td>
+                        <form method="POST" style="display:inline;">
+                            {{ add_form.hidden_tag() }}
+                            <input type="hidden" name="action" value="toggle">
+                            <input type="hidden" name="rt_id" value="{{ rt.id }}">
+                            <button type="submit" class="{% if rt.is_active %}btn-secondary{% else %}btn-primary{% endif %}"
+                                    style="padding:4px 10px;font-size:0.8rem;">
+                                {{ 'Активна' if rt.is_active else 'Отключена' }}
+                            </button>
+                        </form>
+                    </td>
+                    <td>{{ rt.reports|length }}</td>
+                    <td style="white-space:nowrap;">
+                        <a href="{{ url_for('admin_rate_types', edit=rt.id) }}"
+                           class="btn-secondary" style="padding:5px 12px;font-size:0.85rem;">✏️ Ред.</a>
+                        <form method="POST" style="display:inline;"
+                              data-rt-name="{{ rt.name }}"
+                              data-report-count="{{ rt.reports|length }}">
+                            {{ add_form.hidden_tag() }}
+                            <input type="hidden" name="action" value="delete">
+                            <input type="hidden" name="rt_id" value="{{ rt.id }}">
+                            <button type="submit" class="btn-danger" style="padding:5px 12px;font-size:0.85rem;"
+                                    onclick="return confirmRtDelete(this.closest('form'))">
+                                🗑 Удалить
+                            </button>
+                        </form>
+                    </td>
+                    {% endif %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <p>Пока нет типов ставок. Добавьте первый выше.</p>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
+<script>
+function confirmRtDelete(form) {
+    const name = form.dataset.rtName;
+    const count = parseInt(form.dataset.reportCount, 10);
+    if (count > 0) {
+        return confirm(
+            'Удалить тип ставки «' + name + '»?\n\n' +
+            '⚠️ К нему привязано ' + count + ' отчёт(ов). ' +
+            'Отчёты останутся, но ставка по ним станет 0.\n\n' +
+            'Это действие нельзя отменить.'
+        );
+    }
+    return confirm('Удалить тип ставки «' + name + '»?');
+}
+</script>
+{% endblock %}

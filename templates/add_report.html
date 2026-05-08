@@ -35,9 +35,6 @@
             {% endfor %}
         </datalist>
         <div id="inn-hint" style="margin-top:6px;font-size:0.9rem;color:#6c757d;min-height:1.2em;"></div>
-        {% if not organizations %}
-        <p class="text-muted" style="margin-top:0.5rem;">Нет организаций. Попросите администратора добавить их.</p>
-        {% endif %}
         {% for error in form.organization.errors %}
             <div class="alert danger">{{ error }}</div>
         {% endfor %}
@@ -46,10 +43,21 @@
     <div class="form-group">
         <label for="{{ form.work_type_id.id }}">{{ form.work_type_id.label.text }}</label>
         {{ form.work_type_id(class="form-control") }}
-        {% if not work_types %}
-        <p class="text-muted" style="margin-top:0.5rem;">Нет активных типов работ. Попросите администратора добавить их.</p>
-        {% endif %}
         {% for error in form.work_type_id.errors %}
+            <div class="alert danger">{{ error }}</div>
+        {% endfor %}
+    </div>
+
+    <div class="form-group">
+        <label for="{{ form.rate_type_id.id }}">{{ form.rate_type_id.label.text }}</label>
+        {{ form.rate_type_id(class="form-control", id="rate-type-select") }}
+        <div id="rate-hint" style="margin-top:6px;font-size:0.9rem;color:#059669;min-height:1.2em;"></div>
+        {% if not rate_types %}
+        <p style="margin-top:0.4rem;font-size:0.88rem;color:#9ca3af;">
+            Типы ставок не созданы. Попросите администратора добавить их в разделе «Ставки».
+        </p>
+        {% endif %}
+        {% for error in form.rate_type_id.errors %}
             <div class="alert danger">{{ error }}</div>
         {% endfor %}
     </div>
@@ -60,18 +68,8 @@
         {% for error in form.hours_worked.errors %}
             <div class="alert danger">{{ error }}</div>
         {% endfor %}
-        {% if user_rate %}
-        <div id="amount-preview" style="margin-top:6px;font-size:0.9rem;color:#374151;min-height:1.4em;"></div>
-        {% else %}
-        <div style="margin-top:6px;font-size:0.88rem;color:#9ca3af;">Ставка не задана — обратитесь к администратору</div>
-        {% endif %}
+        <div id="amount-preview" style="margin-top:6px;font-size:0.9rem;color:#059669;font-weight:600;min-height:1.4em;"></div>
     </div>
-
-    {% if user_rate %}
-    <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px;padding:10px 16px;margin-bottom:1.2rem;font-size:0.9rem;color:#065f46;">
-        Ваша ставка: <strong>{{ user_rate|int }} ₽/час</strong>
-    </div>
-    {% endif %}
 
     <div class="form-group">
         <label for="{{ form.description.id }}">{{ form.description.label.text }}</label>
@@ -86,19 +84,33 @@
 </div>
 
 <script>
-// Карта: название организации → ИНН
+// Карта: название орг → ИНН
 const orgInnMap = {
     {% for org in organizations %}
     {{ org.name | tojson }}: {{ (org.inn or '') | tojson }}{% if not loop.last %},{% endif %}
     {% endfor %}
 };
 
-const orgInput = document.getElementById('org-input');
-const innHint  = document.getElementById('inn-hint');
+// Карта: rate_type_id → ставка
+const rateMap = {
+    {% for rt in rate_types %}
+    {{ rt.id }}: {{ rt.rate_per_hour }}{% if not loop.last %},{% endif %}
+    {% endfor %}
+};
 
+const orgInput      = document.getElementById('org-input');
+const innHint       = document.getElementById('inn-hint');
+const rateSelect    = document.getElementById('rate-type-select');
+const rateHint      = document.getElementById('rate-hint');
+const hoursInput    = document.getElementById('hours-input');
+const amountPreview = document.getElementById('amount-preview');
+const dateInput     = document.getElementById('work_date');
+const dateWarning   = document.getElementById('date-warning');
+const today         = new Date().toISOString().slice(0, 10);
+
+// ИНН подсказка
 function updateInnHint() {
-    const name = orgInput.value.trim();
-    const inn  = orgInnMap[name];
+    const inn = orgInnMap[orgInput.value.trim()];
     if (inn)      { innHint.textContent = 'ИНН организации: ' + inn; innHint.style.color = '#374151'; }
     else if (inn === '') { innHint.textContent = 'ИНН не указан'; innHint.style.color = '#9ca3af'; }
     else          { innHint.textContent = ''; }
@@ -106,49 +118,44 @@ function updateInnHint() {
 orgInput.addEventListener('input',  updateInnHint);
 orgInput.addEventListener('change', updateInnHint);
 
-// Ограничение и предупреждение для поля даты
-const dateInput   = document.getElementById('work_date');
-const dateWarning = document.getElementById('date-warning');
-const today       = new Date().toISOString().slice(0, 10);
-
+// Ограничение даты
 dateInput.max = today;
-
 dateInput.addEventListener('change', function () {
-    const selected = new Date(this.value);
-    const now      = new Date(today);
-    const diffDays = Math.round((now - selected) / 86400000);
-    if (this.value > today) {
-        this.value = today;
-        dateWarning.textContent = 'Нельзя выбрать будущую дату.';
-    } else if (diffDays > 30) {
-        dateWarning.textContent = '⚠️ Выбрана дата более 30 дней назад — убедитесь, что это правильно.';
-    } else {
-        dateWarning.textContent = '';
-    }
+    const diffDays = Math.round((new Date(today) - new Date(this.value)) / 86400000);
+    if (this.value > today) { this.value = today; dateWarning.textContent = 'Нельзя выбрать будущую дату.'; }
+    else if (diffDays > 30) { dateWarning.textContent = '⚠️ Выбрана дата более 30 дней назад — проверьте правильность.'; }
+    else                    { dateWarning.textContent = ''; }
 });
 
-// AJAX предпросмотр суммы к оплате (только если ставка задана)
-{% if user_rate %}
-const hoursInput    = document.getElementById('hours-input');
-const amountPreview = document.getElementById('amount-preview');
+// Подсказка о ставке при смене типа
+function updateRateHint() {
+    const rid  = parseInt(rateSelect.value, 10);
+    const rate = rateMap[rid];
+    if (rate !== undefined && rate > 0) {
+        rateHint.textContent = 'Ставка: ' + rate.toLocaleString('ru-RU') + ' ₽/час';
+    } else {
+        rateHint.textContent = '';
+    }
+    updateAmountPreview();
+}
+rateSelect.addEventListener('change', updateRateHint);
 
+// Предпросмотр суммы
 function updateAmountPreview() {
     const hours = parseFloat(hoursInput.value);
-    if (!hours || hours <= 0) { amountPreview.textContent = ''; return; }
-    fetch('/api/calculated_amount?hours=' + hours)
-        .then(r => r.json())
-        .then(data => {
-            if (data.rate > 0) {
-                amountPreview.textContent = 'Сумма к оплате: ~' + data.formatted + ' ₽';
-            } else {
-                amountPreview.textContent = '';
-            }
-        })
-        .catch(() => { amountPreview.textContent = ''; });
+    const rid   = parseInt(rateSelect.value, 10);
+    const rate  = rateMap[rid] || 0;
+    if (hours > 0 && rate > 0) {
+        const sum = (hours * rate).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, '\u00a0');
+        amountPreview.textContent = 'Сумма к оплате: ~' + sum + ' ₽';
+    } else {
+        amountPreview.textContent = '';
+    }
 }
-
-hoursInput.addEventListener('input', updateAmountPreview);
+hoursInput.addEventListener('input',  updateAmountPreview);
 hoursInput.addEventListener('change', updateAmountPreview);
-{% endif %}
+
+// Инициализация при загрузке
+updateRateHint();
 </script>
 {% endblock %}

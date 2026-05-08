@@ -3,7 +3,7 @@ import csv
 import pytz
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from models.db import db, bcrypt
-from models import User, Organization, WorkType
+from models import User, Organization, WorkType, RateType
 from datetime import datetime
 from flask_wtf import FlaskForm
 from wtforms import StringField, FloatField, TextAreaField, SubmitField, HiddenField, SelectField
@@ -34,6 +34,7 @@ class Report(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     organization_id = db.Column(db.Integer, db.ForeignKey('organizations.id'), nullable=False)
     work_type_id = db.Column(db.Integer, db.ForeignKey('work_types.id'), nullable=True)
+    rate_type_id = db.Column(db.Integer, db.ForeignKey('rate_types.id'), nullable=True)
     hours_worked = db.Column(db.Float, nullable=False)
     description = db.Column(db.Text, nullable=False)
     work_date = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
@@ -42,19 +43,31 @@ class Report(db.Model):
     user = db.relationship('User', backref=db.backref('reports', lazy=True))
     organization = db.relationship('Organization', back_populates='reports')
     work_type = db.relationship('WorkType', backref='reports')
+    rate_type = db.relationship('RateType', backref='reports')
 
     @property
     def total_amount(self):
-        """Сумма к оплате: часы × ставка сотрудника. Вычисляется динамически."""
-        rate = (self.user.hourly_rate or 0.0) if self.user else 0.0
+        """Сумма к оплате: часы × ставка выбранного типа. Вычисляется динамически."""
+        if self.rate_type:
+            rate = self.rate_type.rate_per_hour or 0.0
+        else:
+            # обратная совместимость: если тип ставки не выбран — берём ставку сотрудника
+            rate = (self.user.hourly_rate or 0.0) if self.user else 0.0
         return round(self.hours_worked * rate, 2)
 
 
 # ── Формы ──────────────────────────────────────────────────────────────────────
 
+class RateTypeForm(FlaskForm):
+    name = StringField('Название', validators=[DataRequired()])
+    rate_per_hour = FloatField('Ставка (₽/час)', validators=[DataRequired(), NumberRange(min=0)])
+    submit = SubmitField('Добавить тип ставки')
+
+
 class ReportForm(FlaskForm):
     organization = StringField('Название организации', validators=[DataRequired()])
     work_type_id = SelectField('Тип работы', coerce=int, validators=[DataRequired()])
+    rate_type_id = SelectField('Тип ставки (день)', coerce=int, validators=[DataRequired()])
     hours_worked = FloatField(
         'Время работы (часы)',
         validators=[
@@ -219,6 +232,17 @@ def migrate_user_hourly_rate():
             conn.execute(text("ALTER TABLE users ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0.0"))
 
 
+def migrate_report_rate_type_fk():
+    """Добавляет колонку rate_type_id в таблицу report, если её нет."""
+    insp = inspect(db.engine)
+    if 'report' not in insp.get_table_names():
+        return
+    cols = {c['name'] for c in insp.get_columns('report')}
+    if 'rate_type_id' not in cols:
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE report ADD COLUMN rate_type_id INTEGER REFERENCES rate_types(id)"))
+
+
 def migrate_report_work_date():
     """Добавляет work_date в таблицу report. Существующим отчётам ставит work_date = date_created."""
     insp = inspect(db.engine)
@@ -256,6 +280,7 @@ with app.app_context():
     migrate_report_work_date()
     migrate_user_hourly_rate()
     db.create_all()
+    migrate_report_rate_type_fk()
     seed_default_work_types()
     if not User.query.first():
         admin = User(full_name='Administrator', nickname='admin', role='admin')
@@ -462,7 +487,7 @@ def daily_report():
 
         query = (
             Report.query
-            .options(joinedload(Report.organization), joinedload(Report.work_type))
+            .options(joinedload(Report.organization), joinedload(Report.work_type), joinedload(Report.rate_type))
             .join(User)
             .filter(Report.work_date >= from_dt, Report.work_date <= to_dt)
         )
@@ -521,7 +546,7 @@ def export_daily_report():
 
         query = (
             Report.query
-            .options(joinedload(Report.organization), joinedload(Report.work_type))
+            .options(joinedload(Report.organization), joinedload(Report.work_type), joinedload(Report.rate_type))
             .join(User, Report.user_id == User.id)
             .filter(Report.work_date >= from_dt, Report.work_date <= to_dt)
         )
@@ -536,7 +561,7 @@ def export_daily_report():
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
 
-    writer.writerow(['Сотрудник', 'Организация', 'ИНН', 'Тип работы', 'Часов', 'Сумма к оплате (руб)', 'Что выполнено', 'Дата работы', 'Дата создания'])
+    writer.writerow(['Сотрудник', 'Организация', 'ИНН', 'Тип работы', 'Тип ставки', 'Ставка (₽/ч)', 'Часов', 'Сумма к оплате (руб)', 'Что выполнено', 'Дата работы', 'Дата создания'])
 
     for report in reports:
         description = report.description.replace('\n', ' ').replace('\r', ' ').replace(',', ';')
@@ -547,22 +572,22 @@ def export_daily_report():
         else:
             hours_str = str(hours).replace('.', ',')
 
-        # Сумма к оплате с запятой как разделитель дробной части (для Excel)
+        # Сумма к оплате с запятой как разделитель (для Excel)
         amount_str = f'{report.total_amount:.2f}'.replace('.', ',')
 
         org_name = report.organization.name if report.organization else ''
         inn = report.organization.inn if report.organization and report.organization.inn else ''
         wt_name = report.work_type.name if report.work_type else ''
+        rt_name = report.rate_type.name if report.rate_type else ''
+        rt_rate = f'{report.rate_type.rate_per_hour:.0f}'.replace('.', ',') if report.rate_type else ''
 
-        # Дата работы — только дата (ДД.ММ.ГГГГ) в МСК
         msk_work = to_msk(report.work_date) if report.work_date else None
         work_date_str = msk_work.strftime('%d.%m.%Y') if msk_work else ''
 
-        # Дата создания — дата + время в МСК
         msk_created = to_msk(report.date_created)
         created_str = msk_created.strftime('%d.%m.%Y %H:%M') if msk_created else ''
 
-        writer.writerow([report.user.full_name, org_name, inn, wt_name, hours_str, amount_str, description, work_date_str, created_str])
+        writer.writerow([report.user.full_name, org_name, inn, wt_name, rt_name, rt_rate, hours_str, amount_str, description, work_date_str, created_str])
 
     csv_content = '\uFEFF' + output.getvalue()
     output.close()
@@ -775,9 +800,10 @@ def add_report():
     form = ReportForm()
     organizations = Organization.query.order_by(Organization.name).all()
     work_types = WorkType.query.filter_by(is_active=True).order_by(WorkType.name).all()
+    rate_types = RateType.query.filter_by(is_active=True).order_by(RateType.name).all()
 
-    # Заполняем варианты типов работ для SelectField
     form.work_type_id.choices = [(wt.id, wt.name) for wt in work_types]
+    form.rate_type_id.choices = [(rt.id, f'{rt.name} — {rt.rate_per_hour:.0f} ₽/ч') for rt in rate_types]
 
     today_str = datetime.utcnow().strftime('%Y-%m-%d')
 
@@ -787,11 +813,9 @@ def add_report():
         if not org:
             flash('Выберите организацию из списка подсказок.', 'danger')
         else:
-            # Парсим дату работы из формы; если не указана — берём сегодня
             raw_date = request.form.get('work_date', '').strip()
             try:
                 work_date = datetime.strptime(raw_date, '%Y-%m-%d') if raw_date else datetime.utcnow()
-                # Запрещаем будущие даты
                 if work_date.date() > datetime.utcnow().date():
                     work_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
             except ValueError:
@@ -801,6 +825,7 @@ def add_report():
                 user_id=session['user_id'],
                 organization_id=org.id,
                 work_type_id=form.work_type_id.data,
+                rate_type_id=form.rate_type_id.data,
                 hours_worked=form.hours_worked.data,
                 description=form.description.data,
                 work_date=work_date,
@@ -810,26 +835,76 @@ def add_report():
             flash('Отчёт успешно добавлен', 'success')
             return redirect(url_for('workers_panel'))
 
-    current_user = db.session.get(User, session['user_id'])
-    user_rate = (current_user.hourly_rate or 0.0) if current_user else 0.0
-    return render_template('add_report.html', form=form, organizations=organizations, work_types=work_types, today=today_str, user_rate=user_rate)
+    return render_template('add_report.html', form=form, organizations=organizations,
+                           work_types=work_types, rate_types=rate_types, today=today_str)
 
 
-@app.route('/api/calculated_amount')
-def calculated_amount_api():
-    """AJAX: возвращает сумму к оплате для текущего пользователя по количеству часов."""
-    if 'user_id' not in session:
-        return {'amount': 0, 'rate': 0}
-    user = db.session.get(User, session['user_id'])
-    if not user:
-        return {'amount': 0, 'rate': 0}
-    try:
-        hours = float(request.args.get('hours', 0))
-    except ValueError:
-        hours = 0.0
-    rate = user.hourly_rate or 0.0
-    amount = round(hours * rate, 2)
-    return {'amount': amount, 'rate': rate, 'formatted': f'{amount:,.2f}'.replace(',', ' ')}
+@app.route('/admin/rate_types', methods=['GET', 'POST'])
+def admin_rate_types():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        flash('Доступ запрещён', 'warning')
+        return redirect(url_for('login'))
+
+    add_form = RateTypeForm()
+    edit_id = request.args.get('edit', type=int)
+
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'add' and add_form.validate_on_submit():
+            name = add_form.name.data.strip()
+            if RateType.query.filter_by(name=name).first():
+                flash('Тип ставки с таким названием уже существует', 'danger')
+            else:
+                db.session.add(RateType(name=name, rate_per_hour=add_form.rate_per_hour.data))
+                db.session.commit()
+                flash('Тип ставки добавлен', 'success')
+                return redirect(url_for('admin_rate_types'))
+
+        elif action == 'edit':
+            rt_id = request.form.get('rt_id', type=int)
+            name = (request.form.get('name') or '').strip()
+            try:
+                rate = float(request.form.get('rate_per_hour', 0))
+            except ValueError:
+                rate = 0.0
+            if not name:
+                flash('Название не может быть пустым', 'danger')
+            else:
+                rt = db.session.get(RateType, rt_id)
+                if rt:
+                    existing = RateType.query.filter_by(name=name).first()
+                    if existing and existing.id != rt.id:
+                        flash('Тип ставки с таким названием уже существует', 'danger')
+                    else:
+                        rt.name = name
+                        rt.rate_per_hour = rate
+                        db.session.commit()
+                        flash('Тип ставки обновлён', 'success')
+            return redirect(url_for('admin_rate_types'))
+
+        elif action == 'toggle':
+            rt_id = request.form.get('rt_id', type=int)
+            rt = db.session.get(RateType, rt_id)
+            if rt:
+                rt.is_active = not rt.is_active
+                db.session.commit()
+                flash(f'Тип ставки «{rt.name}» {"активирован" if rt.is_active else "отключён"}', 'success')
+            return redirect(url_for('admin_rate_types'))
+
+        elif action == 'delete':
+            rt_id = request.form.get('rt_id', type=int)
+            rt = db.session.get(RateType, rt_id)
+            if rt:
+                # Обнуляем ссылку в отчётах (не удаляем сами отчёты)
+                Report.query.filter_by(rate_type_id=rt.id).update({'rate_type_id': None})
+                db.session.delete(rt)
+                db.session.commit()
+                flash(f'Тип ставки «{rt.name}» удалён', 'success')
+            return redirect(url_for('admin_rate_types'))
+
+    rate_types = RateType.query.order_by(RateType.name).all()
+    return render_template('admin_rate_types.html', rate_types=rate_types, add_form=add_form, edit_id=edit_id)
 
 
 if __name__ == '__main__':
