@@ -10,6 +10,7 @@ class User(db.Model):
     role = db.Column(db.String(20), default='employee')
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
     is_active = db.Column(db.Boolean, default=True)
+    hourly_rate = db.Column(db.Float, default=0.0, nullable=False)
 
     def set_password(self, password):
         self.password_hash = bcrypt.generate_password_hash(password).decode('utf-8')

@@ -43,6 +43,12 @@ class Report(db.Model):
     organization = db.relationship('Organization', back_populates='reports')
     work_type = db.relationship('WorkType', backref='reports')
 
+    @property
+    def total_amount(self):
+        """Сумма к оплате: часы × ставка сотрудника. Вычисляется динамически."""
+        rate = (self.user.hourly_rate or 0.0) if self.user else 0.0
+        return round(self.hours_worked * rate, 2)
+
 
 # ── Формы ──────────────────────────────────────────────────────────────────────
 
@@ -202,6 +208,17 @@ def migrate_organizations_inn():
             conn.execute(text("ALTER TABLE organizations ADD COLUMN inn VARCHAR(12) DEFAULT ''"))
 
 
+def migrate_user_hourly_rate():
+    """Добавляет поле hourly_rate в таблицу users, если его нет."""
+    insp = inspect(db.engine)
+    if 'users' not in insp.get_table_names():
+        return
+    cols = {c['name'] for c in insp.get_columns('users')}
+    if 'hourly_rate' not in cols:
+        with db.engine.begin() as conn:
+            conn.execute(text("ALTER TABLE users ADD COLUMN hourly_rate REAL NOT NULL DEFAULT 0.0"))
+
+
 def migrate_report_work_date():
     """Добавляет work_date в таблицу report. Существующим отчётам ставит work_date = date_created."""
     insp = inspect(db.engine)
@@ -237,6 +254,7 @@ with app.app_context():
     migrate_reports_work_type_fk()
     migrate_organizations_inn()
     migrate_report_work_date()
+    migrate_user_hourly_rate()
     db.create_all()
     seed_default_work_types()
     if not User.query.first():
@@ -385,6 +403,47 @@ def staff_list():
     return render_template('staff_list.html', users=users)
 
 
+@app.route('/admin/rates', methods=['GET', 'POST'])
+def admin_rates():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        flash('Доступ запрещён', 'warning')
+        return redirect(url_for('login'))
+
+    from flask_wtf import FlaskForm
+    csrf_form = FlaskForm()
+
+    if request.method == 'POST' and csrf_form.validate():
+        save_all = request.form.get('save_all')
+        save_user_id = request.form.get('save_user_id', type=int)
+
+        if save_all:
+            # Сохранить ставки для всех сотрудников сразу
+            users_all = User.query.all()
+            for u in users_all:
+                raw = request.form.get(f'rate_{u.id}', '').strip()
+                try:
+                    u.hourly_rate = float(raw) if raw else 0.0
+                except ValueError:
+                    pass
+            db.session.commit()
+            flash('Ставки всех сотрудников обновлены', 'success')
+        elif save_user_id:
+            # Сохранить ставку одного сотрудника
+            u = db.session.get(User, save_user_id)
+            if u:
+                raw = request.form.get(f'rate_{u.id}', '').strip()
+                try:
+                    u.hourly_rate = float(raw) if raw else 0.0
+                    db.session.commit()
+                    flash(f'Ставка для {u.full_name} обновлена: {u.hourly_rate:.0f} ₽/час', 'success')
+                except ValueError:
+                    flash('Некорректное значение ставки', 'danger')
+        return redirect(url_for('admin_rates'))
+
+    users = User.query.order_by(User.full_name).all()
+    return render_template('admin_rates.html', users=users, csrf_form=csrf_form)
+
+
 @app.route('/admin/daily_report')
 def daily_report():
     if 'user_id' not in session or session.get('role') != 'admin':
@@ -412,16 +471,19 @@ def daily_report():
 
         reports = query.order_by(Report.work_date.desc()).all()
         total_hours = sum(r.hours_worked for r in reports)
+        total_amount = sum(r.total_amount for r in reports)
     except ValueError:
         flash('Некорректный формат даты', 'danger')
         reports = []
         total_hours = 0
+        total_amount = 0.0
 
     all_work_types = WorkType.query.order_by(WorkType.name).all()
     return render_template(
         'daily_report.html',
         reports=reports,
         total_hours=total_hours,
+        total_amount=total_amount,
         date_from=date_from,
         date_to=date_to,
         all_work_types=all_work_types,
@@ -474,7 +536,7 @@ def export_daily_report():
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
 
-    writer.writerow(['Сотрудник', 'Организация', 'ИНН', 'Тип работы', 'Часов', 'Что выполнено', 'Дата работы', 'Дата создания'])
+    writer.writerow(['Сотрудник', 'Организация', 'ИНН', 'Тип работы', 'Часов', 'Сумма к оплате (руб)', 'Что выполнено', 'Дата работы', 'Дата создания'])
 
     for report in reports:
         description = report.description.replace('\n', ' ').replace('\r', ' ').replace(',', ';')
@@ -484,6 +546,9 @@ def export_daily_report():
             hours_str = str(int(hours))
         else:
             hours_str = str(hours).replace('.', ',')
+
+        # Сумма к оплате с запятой как разделитель дробной части (для Excel)
+        amount_str = f'{report.total_amount:.2f}'.replace('.', ',')
 
         org_name = report.organization.name if report.organization else ''
         inn = report.organization.inn if report.organization and report.organization.inn else ''
@@ -497,7 +562,7 @@ def export_daily_report():
         msk_created = to_msk(report.date_created)
         created_str = msk_created.strftime('%d.%m.%Y %H:%M') if msk_created else ''
 
-        writer.writerow([report.user.full_name, org_name, inn, wt_name, hours_str, description, work_date_str, created_str])
+        writer.writerow([report.user.full_name, org_name, inn, wt_name, hours_str, amount_str, description, work_date_str, created_str])
 
     csv_content = '\uFEFF' + output.getvalue()
     output.close()
@@ -745,7 +810,26 @@ def add_report():
             flash('Отчёт успешно добавлен', 'success')
             return redirect(url_for('workers_panel'))
 
-    return render_template('add_report.html', form=form, organizations=organizations, work_types=work_types, today=today_str)
+    current_user = db.session.get(User, session['user_id'])
+    user_rate = (current_user.hourly_rate or 0.0) if current_user else 0.0
+    return render_template('add_report.html', form=form, organizations=organizations, work_types=work_types, today=today_str, user_rate=user_rate)
+
+
+@app.route('/api/calculated_amount')
+def calculated_amount_api():
+    """AJAX: возвращает сумму к оплате для текущего пользователя по количеству часов."""
+    if 'user_id' not in session:
+        return {'amount': 0, 'rate': 0}
+    user = db.session.get(User, session['user_id'])
+    if not user:
+        return {'amount': 0, 'rate': 0}
+    try:
+        hours = float(request.args.get('hours', 0))
+    except ValueError:
+        hours = 0.0
+    rate = user.hourly_rate or 0.0
+    amount = round(hours * rate, 2)
+    return {'amount': amount, 'rate': rate, 'formatted': f'{amount:,.2f}'.replace(',', ' ')}
 
 
 if __name__ == '__main__':

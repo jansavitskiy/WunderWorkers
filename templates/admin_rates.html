@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block title %}Ставки сотрудников{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+{% endblock %}
+
+{% block body %}
+<div class="admin-dashboard">
+    <h1>💰 Ставки сотрудников</h1>
+    <a href="{{ url_for('admin_panel') }}" class="btn-secondary">← Назад</a>
+
+    <p style="margin-top:1rem;color:#6b7280;">
+        Укажите почасовую ставку для каждого сотрудника. Сумма к оплате рассчитывается автоматически:
+        <strong>часы × ставка</strong>. При изменении ставки все прошлые отчёты пересчитываются мгновенно.
+    </p>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="alert {{ category }}" style="margin-top:1rem;">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <form method="POST" style="margin-top:1.5rem;">
+        {{ csrf_form.hidden_tag() }}
+        <table class="data-table">
+            <thead>
+                <tr>
+                    <th>ФИО</th>
+                    <th>Ник</th>
+                    <th>Роль</th>
+                    <th>Ставка (₽/час)</th>
+                    <th>Сохранить</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for user in users %}
+                <tr>
+                    <td>{{ user.full_name }}</td>
+                    <td><code>{{ user.nickname }}</code></td>
+                    <td>{{ 'Администратор' if user.role == 'admin' else 'Сотрудник' }}</td>
+                    <td>
+                        <input type="number" name="rate_{{ user.id }}"
+                               value="{{ user.hourly_rate if user.hourly_rate else '' }}"
+                               min="0" step="50" placeholder="0"
+                               style="width:120px;padding:6px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:0.95rem;">
+                    </td>
+                    <td>
+                        <button type="submit" name="save_user_id" value="{{ user.id }}" class="btn-primary" style="padding:6px 16px;">
+                            Сохранить
+                        </button>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <div style="margin-top:1rem;">
+            <button type="submit" name="save_all" value="1" class="btn-secondary">
+                Сохранить всех сразу
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}
+{% block extra_js %}
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
+{% endblock %}
