@@ -3,7 +3,7 @@ import csv
 import pytz
 from flask import Flask, render_template, request, redirect, url_for, session, flash, Response
 from models.db import db, bcrypt
-from models import User, Organization, WorkType, RateType
+from models import User, Organization, WorkType, RateType, UserWorkTypeRate
 from datetime import datetime
 from flask_wtf import FlaskForm
 from wtforms import StringField, FloatField, TextAreaField, SubmitField, HiddenField, SelectField
@@ -46,14 +46,21 @@ class Report(db.Model):
     rate_type = db.relationship('RateType', backref='reports')
 
     @property
+    def effective_rate(self):
+        """Ставка ₽/час для данного отчёта: берётся из матрицы user×work_type."""
+        if self.work_type_id and self.user_id:
+            uwr = UserWorkTypeRate.query.filter_by(
+                user_id=self.user_id, work_type_id=self.work_type_id
+            ).first()
+            if uwr and uwr.rate_per_hour:
+                return uwr.rate_per_hour
+        # Резерв: индивидуальная ставка сотрудника
+        return (self.user.hourly_rate or 0.0) if self.user else 0.0
+
+    @property
     def total_amount(self):
-        """Сумма к оплате: часы × ставка выбранного типа. Вычисляется динамически."""
-        if self.rate_type:
-            rate = self.rate_type.rate_per_hour or 0.0
-        else:
-            # обратная совместимость: если тип ставки не выбран — берём ставку сотрудника
-            rate = (self.user.hourly_rate or 0.0) if self.user else 0.0
-        return round(self.hours_worked * rate, 2)
+        """Сумма к оплате: часы × эффективная ставка."""
+        return round(self.hours_worked * self.effective_rate, 2)
 
 
 # ── Формы ──────────────────────────────────────────────────────────────────────
@@ -66,8 +73,7 @@ class RateTypeForm(FlaskForm):
 
 class ReportForm(FlaskForm):
     organization = StringField('Название организации', validators=[DataRequired()])
-    work_type_id = SelectField('Тип работы', coerce=int, validators=[DataRequired()])
-    rate_type_id = SelectField('Тип ставки (день)', coerce=int, validators=[DataRequired()])
+    work_type_id = SelectField('Тип рабочего дня', coerce=int, validators=[DataRequired()])
     hours_worked = FloatField(
         'Время работы (часы)',
         validators=[
@@ -241,6 +247,11 @@ def migrate_report_rate_type_fk():
     if 'rate_type_id' not in cols:
         with db.engine.begin() as conn:
             conn.execute(text("ALTER TABLE report ADD COLUMN rate_type_id INTEGER REFERENCES rate_types(id)"))
+
+
+def migrate_user_work_type_rates():
+    """Создаёт таблицу user_work_type_rates если её нет (db.create_all делает это автоматически после импорта модели)."""
+    pass  # db.create_all() уже создаёт таблицу через SQLAlchemy metadata
 
 
 def migrate_report_work_date():
@@ -800,10 +811,14 @@ def add_report():
     form = ReportForm()
     organizations = Organization.query.order_by(Organization.name).all()
     work_types = WorkType.query.filter_by(is_active=True).order_by(WorkType.name).all()
-    rate_types = RateType.query.filter_by(is_active=True).order_by(RateType.name).all()
 
     form.work_type_id.choices = [(wt.id, wt.name) for wt in work_types]
-    form.rate_type_id.choices = [(rt.id, f'{rt.name} — {rt.rate_per_hour:.0f} ₽/ч') for rt in rate_types]
+
+    # Карта ставок текущего пользователя: work_type_id → rate_per_hour
+    user_rates = {
+        uwr.work_type_id: uwr.rate_per_hour
+        for uwr in UserWorkTypeRate.query.filter_by(user_id=session['user_id']).all()
+    }
 
     today_str = datetime.utcnow().strftime('%Y-%m-%d')
 
@@ -825,7 +840,6 @@ def add_report():
                 user_id=session['user_id'],
                 organization_id=org.id,
                 work_type_id=form.work_type_id.data,
-                rate_type_id=form.rate_type_id.data,
                 hours_worked=form.hours_worked.data,
                 description=form.description.data,
                 work_date=work_date,
@@ -836,7 +850,51 @@ def add_report():
             return redirect(url_for('workers_panel'))
 
     return render_template('add_report.html', form=form, organizations=organizations,
-                           work_types=work_types, rate_types=rate_types, today=today_str)
+                           work_types=work_types, user_rates=user_rates, today=today_str)
+
+
+@app.route('/admin/user_rates', methods=['GET', 'POST'])
+def admin_user_rates():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        flash('Доступ запрещён', 'warning')
+        return redirect(url_for('login'))
+
+    from flask_wtf import FlaskForm
+    csrf_form = FlaskForm()
+    employees = User.query.filter_by(role='employee').order_by(User.full_name).all()
+    work_types = WorkType.query.filter_by(is_active=True).order_by(WorkType.name).all()
+
+    if request.method == 'POST' and csrf_form.validate_on_submit():
+        for emp in employees:
+            for wt in work_types:
+                key = f'rate_{emp.id}_{wt.id}'
+                raw = request.form.get(key, '').strip()
+                try:
+                    rate_val = float(raw) if raw else None
+                except ValueError:
+                    rate_val = None
+
+                uwr = UserWorkTypeRate.query.filter_by(user_id=emp.id, work_type_id=wt.id).first()
+                if rate_val is not None and rate_val >= 0:
+                    if uwr:
+                        uwr.rate_per_hour = rate_val
+                    else:
+                        db.session.add(UserWorkTypeRate(user_id=emp.id, work_type_id=wt.id, rate_per_hour=rate_val))
+                elif uwr and (raw == '' or raw is None):
+                    db.session.delete(uwr)
+
+        db.session.commit()
+        flash('Ставки сохранены', 'success')
+        return redirect(url_for('admin_user_rates'))
+
+    # Строим вложенный словарь: rate_map[user_id][work_type_id] = rate_per_hour
+    all_rates = UserWorkTypeRate.query.all()
+    rate_map = {}
+    for uwr in all_rates:
+        rate_map.setdefault(uwr.user_id, {})[uwr.work_type_id] = uwr.rate_per_hour
+
+    return render_template('admin_user_rates.html', employees=employees, work_types=work_types,
+                           rate_map=rate_map, csrf_form=csrf_form)
 
 
 @app.route('/admin/rate_types', methods=['GET', 'POST'])

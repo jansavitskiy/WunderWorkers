@@ -1,0 +1,112 @@
+{% extends 'base.html' %}
+{% block title %}Ставки сотрудников{% endblock %}
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+<style>
+.rates-table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; }
+.rates-table th, .rates-table td {
+    border: 1px solid #e2e8f0;
+    padding: 10px 14px;
+    text-align: center;
+    font-size: 0.95rem;
+}
+.rates-table th { background: #f8fafc; font-weight: 600; }
+.rates-table th.name-col { text-align: left; min-width: 160px; }
+.rates-table td.name-col { text-align: left; font-weight: 500; }
+.rate-input {
+    width: 90px;
+    padding: 6px 8px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 0.9rem;
+    transition: border-color .2s, box-shadow .2s;
+}
+.rate-input:focus { outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15); }
+.rate-input.has-value { background: #f0fdf4; border-color: #86efac; color: #065f46; font-weight: 600; }
+.save-bar {
+    position: sticky; bottom: 0; background: white;
+    border-top: 1px solid #e2e8f0; padding: 14px 0;
+    display: flex; align-items: center; gap: 16px;
+    z-index: 10; margin-top: 1rem;
+}
+.legend { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; font-size: 0.85rem; color: #6b7280; }
+.legend span { display: flex; align-items: center; gap: 6px; }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="admin-dashboard">
+    <h1>💰 Ставки сотрудников</h1>
+    <a href="{{ url_for('admin_panel') }}" class="btn-secondary">← Назад</a>
+
+    <p style="margin-top:1rem;color:#6b7280;max-width:640px;">
+        Задайте каждому сотруднику ставку для каждого типа рабочего дня.
+        Когда сотрудник выбирает тип работы в отчёте — сумма считается как
+        <strong>часы × ставка</strong>.
+    </p>
+
+    {% if not work_types %}
+        <div class="alert warning" style="margin-top:1.5rem;">
+            Сначала создайте типы работ (Будни, Выходные, Командировка) в разделе
+            <a href="{{ url_for('admin_work_types') }}">Типы работ</a>.
+        </div>
+    {% elif not employees %}
+        <div class="alert warning" style="margin-top:1.5rem;">Нет сотрудников для настройки ставок.</div>
+    {% else %}
+    <form method="POST">
+        {{ csrf_form.hidden_tag() }}
+        <div style="overflow-x:auto;">
+        <table class="rates-table">
+            <thead>
+                <tr>
+                    <th class="name-col">Сотрудник</th>
+                    {% for wt in work_types %}
+                    <th>{{ wt.name }}<br><span style="font-size:0.75rem;font-weight:400;color:#9ca3af;">₽/час</span></th>
+                    {% endfor %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for emp in employees %}
+                <tr>
+                    <td class="name-col">
+                        <div style="font-weight:600;">{{ emp.full_name }}</div>
+                        <div style="font-size:0.82rem;color:#9ca3af;">@{{ emp.nickname }}</div>
+                    </td>
+                    {% for wt in work_types %}
+                    {% set rate_val = rate_map.get(emp.id, {}).get(wt.id, '') %}
+                    <td>
+                        <input
+                            type="number"
+                            name="rate_{{ emp.id }}_{{ wt.id }}"
+                            value="{{ rate_val if rate_val != '' else '' }}"
+                            class="rate-input{% if rate_val %} has-value{% endif %}"
+                            min="0" step="50"
+                            placeholder="—"
+                            oninput="this.classList.toggle('has-value', this.value !== '' && parseFloat(this.value) > 0)"
+                        >
+                    </td>
+                    {% endfor %}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+
+        <div class="save-bar">
+            <button type="submit" class="btn-primary">💾 Сохранить все ставки</button>
+            <span style="font-size:0.88rem;color:#6b7280;">Пустое поле = ставка не задана (сумма не рассчитывается)</span>
+        </div>
+    </form>
+
+    <div class="legend">
+        <span><span style="display:inline-block;width:14px;height:14px;background:#f0fdf4;border:1px solid #86efac;border-radius:3px;"></span> Ставка задана</span>
+        <span><span style="display:inline-block;width:14px;height:14px;background:white;border:1px solid #cbd5e1;border-radius:3px;"></span> Не задана</span>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='admin.js') }}"></script>
+{% endblock %}

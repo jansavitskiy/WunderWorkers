@@ -15,7 +15,7 @@
                 <th>Дата работы</th>
                 <th>Организация</th>
                 <th>Тип работы</th>
-                <th>Тип ставки</th>
+                <th>Ставка (₽/ч)</th>
                 <th>Часы</th>
                 <th>Сумма (₽)</th>
                 <th>Что выполнено</th>
@@ -29,7 +29,13 @@
                     <td><strong>{{ report.work_date|msk if report.work_date else report.date_created|msk }}</strong></td>
                     <td>{{ report.organization.name }}</td>
                     <td>{{ report.work_type.name if report.work_type else '—' }}</td>
-                    <td>{{ report.rate_type.name if report.rate_type else '—' }}</td>
+                    <td>
+                        {% if report.effective_rate > 0 %}
+                            <span style="color:#059669;font-weight:600;">{{ report.effective_rate|int }}</span>
+                        {% else %}
+                            <span style="color:#9ca3af;">—</span>
+                        {% endif %}
+                    </td>
                     <td>{{ report.hours_worked }}</td>
                     <td>
                         {% if report.total_amount > 0 %}
